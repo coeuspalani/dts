@@ -22,14 +22,14 @@ export async function POST(req: NextRequest) {
     usersToSync = [data]
   } else {
     if (!isCron && user?.role !== 'admin') return forbidden('Admin or cron required')
-    const { data } = await supabaseAdmin.from('users')
-      .select('id,leetcode_username').eq('role', 'member')
+    const { data } = await supabaseAdmin.from('users').select('id,leetcode_username').eq('role', 'member')
     usersToSync = data ?? []
   }
 
   const results: any[] = []
   const errors:  any[] = []
-  const today = new Date().toISOString().split('T')[0]
+  const now  = new Date()
+  const today = now.toISOString().split('T')[0]
 
   for (const u of usersToSync) {
     try {
@@ -42,12 +42,13 @@ export async function POST(req: NextRequest) {
         medium_solved:  s.mediumSolved,
         hard_solved:    s.hardSolved,
         points:         s.points,
-        last_synced_at: new Date().toISOString(),
+        last_synced_at: now.toISOString(),
       }).eq('id', u.id)
       if (userErr) throw userErr
 
-      // 2. Upsert daily snapshot for weekly chart
-      await supabaseAdmin.from('solve_history').upsert({
+      // 2. Insert new snapshot each sync (no upsert — allows multiple per day)
+      //    Weekly chart uses first vs latest snapshot of the day
+      await supabaseAdmin.from('solve_history').insert({
         user_id:       u.id,
         snapshot_date: today,
         solve_count:   s.totalSolved,
@@ -55,9 +56,10 @@ export async function POST(req: NextRequest) {
         medium_solved: s.mediumSolved,
         hard_solved:   s.hardSolved,
         points:        s.points,
-      }, { onConflict: 'user_id,snapshot_date' })
+        snapshot_time: now.toISOString(),
+      })
 
-      // 3. Update active challenge participations for this user
+      // 3. Update ALL active challenge participations for this user
       const { data: participations } = await supabaseAdmin
         .from('challenge_participants')
         .select('id, solve_count_at_start, points_at_start, challenges!inner(status)')
@@ -65,14 +67,11 @@ export async function POST(req: NextRequest) {
         .eq('challenges.status', 'active')
 
       for (const p of participations ?? []) {
-        const solvesDiff = Math.max(0, s.totalSolved - p.solve_count_at_start)
-        // Points earned = difference in points since joining
         const pointsDiff = Math.max(0, s.points - p.points_at_start)
-
         await supabaseAdmin.from('challenge_participants').update({
           solve_count_current: s.totalSolved,
           points_earned:       pointsDiff,
-          updated_at:          new Date().toISOString(),
+          updated_at:          now.toISOString(),
         }).eq('id', p.id)
       }
 
@@ -82,49 +81,35 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 4. Re-rank all members globally
+  // 4. Re-rank globally
   const { data: ranked } = await supabaseAdmin.from('users')
     .select('id').eq('role', 'member').order('points', { ascending: false })
   if (ranked) {
     for (let i = 0; i < ranked.length; i++) {
-      await supabaseAdmin.from('users')
-        .update({ current_rank: i + 1 }).eq('id', ranked[i].id)
+      await supabaseAdmin.from('users').update({ current_rank: i + 1 }).eq('id', ranked[i].id)
     }
   }
 
-  // 5. Re-rank participants within each active challenge by points_earned
-  const { data: activeChallenges } = await supabaseAdmin
-    .from('challenges').select('id').eq('status', 'active')
-
+  // 5. Re-rank participants per active challenge
+  const { data: activeChallenges } = await supabaseAdmin.from('challenges').select('id').eq('status', 'active')
   for (const challenge of activeChallenges ?? []) {
     const { data: pts } = await supabaseAdmin
-      .from('challenge_participants')
-      .select('id')
-      .eq('challenge_id', challenge.id)
-      .order('points_earned', { ascending: false })
-
+      .from('challenge_participants').select('id')
+      .eq('challenge_id', challenge.id).order('points_earned', { ascending: false })
     for (let i = 0; i < (pts ?? []).length; i++) {
       await supabaseAdmin.from('challenge_participants')
-        .update({ rank_in_challenge: i + 1 })
-        .eq('id', pts![i].id)
+        .update({ rank_in_challenge: i + 1 }).eq('id', pts![i].id)
     }
   }
 
-  return ok({
-    synced:       results.length,
-    ranked_count: ranked?.length ?? 0,
-    synced_at:    new Date().toISOString(),
-    results,
-    errors,
-  })
+  return ok({ synced: results.length, ranked_count: ranked?.length ?? 0,
+    synced_at: now.toISOString(), results, errors })
 }
 
 export async function GET(req: NextRequest) {
   if (req.headers.get('x-sync-secret') !== process.env.SYNC_SECRET)
     return unauthorized('Invalid sync secret')
   return POST(new Request(req.url, {
-    method: 'POST',
-    headers: req.headers,
-    body: JSON.stringify({}),
+    method: 'POST', headers: req.headers, body: JSON.stringify({}),
   }) as NextRequest)
 }

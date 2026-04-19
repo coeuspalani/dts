@@ -13,6 +13,7 @@ export default function Sidebar() {
 
   const nav = [
     { href: '/dashboard',   label: 'Dashboard',   icon: LayoutDashboard },
+    { href: '/challenges', label: 'Challenges', icon: Zap },
     { href: '/leaderboard', label: 'Leaderboard', icon: Trophy },
     ...(user?.role === 'admin' ? [{ href: '/admin', label: 'Admin', icon: Settings }] : []),
   ]

@@ -3,12 +3,24 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { getUser, ok, badRequest, forbidden, serverError } from '@/lib/middleware'
 
 export async function GET(req: NextRequest) {
-  const status = new URL(req.url).searchParams.get('status')
-  let query = supabaseAdmin.from('challenges').select('*').order('start_date', { ascending: false })
-  if (status) query = query.eq('status', status)
+  const { searchParams } = new URL(req.url)
+  const status = searchParams.get('status')
+
+  let query = supabaseAdmin
+    .from('challenges')
+    .select('*')
+    .order('start_date', { ascending: false })
+
+  // If no status filter → return active + upcoming (exclude completed/deleted)
+  if (status) {
+    query = query.eq('status', status)
+  } else {
+    query = query.in('status', ['active', 'upcoming'])
+  }
+
   const { data, error } = await query
   if (error) return serverError('Failed to fetch challenges')
-  return ok(data)
+  return ok(data ?? [])
 }
 
 export async function POST(req: NextRequest) {
@@ -20,7 +32,8 @@ export async function POST(req: NextRequest) {
   if (!title || !start_date || !end_date) return badRequest('title, start_date, end_date are required')
   if (new Date(end_date) <= new Date(start_date)) return badRequest('end_date must be after start_date')
 
-  const { data, error } = await supabaseAdmin.from('challenges')
+  const { data, error } = await supabaseAdmin
+    .from('challenges')
     .insert({ title, start_date, end_date, status, created_by: user.sub })
     .select('*').single()
 

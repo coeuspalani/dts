@@ -8,11 +8,25 @@ export async function GET(req: NextRequest) {
   const limit  = Math.min(Number(searchParams.get('limit')  ?? 50), 100)
   const offset = Number(searchParams.get('offset') ?? 0)
 
-  const view = challenge_id ? 'challenge_leaderboard' : 'leaderboard'
-  let query = supabaseAdmin.from(view).select('*', { count: 'exact' }).range(offset, offset + limit - 1)
-  if (challenge_id) query = query.eq('challenge_id', challenge_id)
+  if (challenge_id) {
+    // Per-challenge leaderboard — uses the fixed view
+    const { data, error, count } = await supabaseAdmin
+      .from('challenge_leaderboard')
+      .select('rank, challenge_id, user_id, name, leetcode_username, solves_in_challenge, points_earned, rank_change', { count: 'exact' })
+      .eq('challenge_id', challenge_id)
+      .order('rank', { ascending: true })
+      .range(offset, offset + limit - 1)
 
-  const { data, error, count } = await query
+    if (error) return serverError('Failed to fetch challenge leaderboard')
+    return ok({ entries: data, total: count ?? 0 })
+  }
+
+  // Global leaderboard
+  const { data, error, count } = await supabaseAdmin
+    .from('leaderboard')
+    .select('*', { count: 'exact' })
+    .range(offset, offset + limit - 1)
+
   if (error) return serverError('Failed to fetch leaderboard')
   return ok({ entries: data, total: count ?? 0 })
 }
