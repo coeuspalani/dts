@@ -103,43 +103,35 @@ export default function LeaderboardPage() {
       {/* Podium — top 3 */}
       {!loading && top3.length >= 3 && (
         <div className="mb-5 fade-up-2">
-          <div className="flex items-end justify-center gap-3 h-44">
-            {/* 2nd place */}
-            <div className={`flex-1 max-w-[180px] flex flex-col items-center justify-end pb-5 rounded-2xl border ${rankStyles[2].bg} ${rankStyles[2].border} h-[75%] relative overflow-hidden shadow-lg ${rankStyles[2].glow}`}>
-              <div className="absolute top-3 right-3 text-[10px] font-mono text-white/30">2nd</div>
-              <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-base font-black mb-2">
-                {top3[1].name[0]}
-              </div>
-              <div className="text-sm font-bold truncate px-2 text-center">{top3[1].name}</div>
-              <div className={`text-lg font-black font-mono mt-0.5 ${rankStyles[2].text}`}>{getPoints(top3[1])}</div>
-              <div className="text-[9px] font-mono text-muted">pts</div>
-              <div className="text-[9px] font-mono text-muted mt-0.5">{getSolves(top3[1])} solves</div>
-            </div>
-
-            {/* 1st place */}
-            <div className={`flex-1 max-w-[200px] flex flex-col items-center justify-end pb-5 rounded-2xl border ${rankStyles[1].bg} ${rankStyles[1].border} h-full relative overflow-hidden shadow-xl ${rankStyles[1].glow}`}>
-              <div className="absolute inset-0 bg-gradient-to-b from-gold/5 to-transparent pointer-events-none" />
-              <div className="absolute top-3 text-xl">👑</div>
-              <div className="w-12 h-12 rounded-full bg-gold/20 border border-gold/30 flex items-center justify-center text-lg font-black mb-2 text-gold">
-                {top3[0].name[0]}
-              </div>
-              <div className="text-sm font-bold truncate px-2 text-center">{top3[0].name}</div>
-              <div className={`text-2xl font-black font-mono mt-0.5 ${rankStyles[1].text}`}>{getPoints(top3[0])}</div>
-              <div className="text-[9px] font-mono text-gold/60">pts</div>
-              <div className="text-[9px] font-mono text-muted mt-0.5">{getSolves(top3[0])} solves</div>
-            </div>
-
-            {/* 3rd place */}
-            <div className={`flex-1 max-w-[180px] flex flex-col items-center justify-end pb-5 rounded-2xl border ${rankStyles[3].bg} ${rankStyles[3].border} h-[60%] relative overflow-hidden shadow-lg ${rankStyles[3].glow}`}>
-              <div className="absolute top-3 right-3 text-[10px] font-mono text-white/30">3rd</div>
-              <div className="w-10 h-10 rounded-full bg-orange-500/10 flex items-center justify-center text-base font-black mb-2">
-                {top3[2].name[0]}
-              </div>
-              <div className="text-sm font-bold truncate px-2 text-center">{top3[2].name}</div>
-              <div className={`text-lg font-black font-mono mt-0.5 ${rankStyles[3].text}`}>{getPoints(top3[2])}</div>
-              <div className="text-[9px] font-mono text-muted">pts</div>
-              <div className="text-[9px] font-mono text-muted mt-0.5">{getSolves(top3[2])} solves</div>
-            </div>
+          {/* Podium: order is 2nd | 1st | 3rd */}
+          <div className="flex items-end justify-center gap-2 sm:gap-3">
+            {[
+              { entry: top3[1], rank: 2, height: 'h-36', avatarSize: 'w-10 h-10', pts: 'text-xl', crown: null,   podiumLabel: '2nd' },
+              { entry: top3[0], rank: 1, height: 'h-48', avatarSize: 'w-14 h-14', pts: 'text-3xl', crown: '👑',  podiumLabel: '1st' },
+              { entry: top3[2], rank: 3, height: 'h-28', avatarSize: 'w-9 h-9',   pts: 'text-lg',  crown: null,  podiumLabel: '3rd' },
+            ].map(({ entry, rank, height, avatarSize, pts: ptsCls, crown, podiumLabel }) => {
+              const rs = rankStyles[rank]
+              return (
+                <div key={rank} className={`flex-1 max-w-[200px] flex flex-col items-center ${height} rounded-2xl border ${rs.border} relative`}
+                  style={{ background: rank === 1 ? 'linear-gradient(to bottom, rgba(245,200,66,0.12), transparent)' : rank === 2 ? 'rgba(255,255,255,0.04)' : 'rgba(251,146,60,0.06)' }}>
+                  {/* Avatar sits above card — use negative margin trick */}
+                  <div className={`${avatarSize} rounded-full flex items-center justify-center font-black text-white flex-shrink-0 mt-4 relative z-10`}
+                    style={{ background: rank === 1 ? 'rgba(245,200,66,0.2)' : rank === 2 ? 'rgba(255,255,255,0.1)' : 'rgba(251,146,60,0.15)', border: `1px solid ${rank === 1 ? 'rgba(245,200,66,0.4)' : rank === 2 ? 'rgba(255,255,255,0.15)' : 'rgba(251,146,60,0.3)'}` }}>
+                    {crown
+                      ? <span className="text-xl">{crown}</span>
+                      : <span className={rank === 1 ? 'text-gold' : rank === 2 ? 'text-white/70' : 'text-orange-400'}>{entry.name[0]}</span>
+                    }
+                  </div>
+                  <div className="flex flex-col items-center justify-end flex-1 pb-4 px-2 w-full">
+                    <div className="text-[10px] font-mono text-white/30 mb-1">{podiumLabel}</div>
+                    <div className="text-xs sm:text-sm font-bold truncate w-full text-center">{entry.name}</div>
+                    <div className={`${ptsCls} font-black font-mono leading-none mt-1 ${rs.text}`}>{getPoints(entry)}</div>
+                    <div className="text-[9px] font-mono text-muted">pts</div>
+                    <div className="text-[9px] font-mono text-muted mt-0.5">{getSolves(entry)} solves</div>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
