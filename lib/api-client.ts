@@ -1,6 +1,4 @@
-'use client'
-
-const BASE = ''  // same origin
+const BASE = ''
 
 function getTokens() {
   if (typeof window === 'undefined') return { access: '', refresh: '' }
@@ -25,7 +23,7 @@ async function refreshTokens(): Promise<boolean> {
   const { refresh } = getTokens()
   if (!refresh) return false
   try {
-    const res  = await fetch(`${BASE}/api/auth/refresh`, {
+    const res = await fetch(`${BASE}/api/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token: refresh }),
@@ -48,12 +46,11 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, retry = true
     },
   })
 
-  // Token expired — try to refresh once
   if (res.status === 401 && retry) {
-    const ok = await refreshTokens()
-    if (ok) return apiFetch(path, options, false)
+    const refreshed = await refreshTokens()
+    if (refreshed) return apiFetch(path, options, false)
     clearTokens()
-    window.location.href = '/login'
+    if (typeof window !== 'undefined') window.location.href = '/login'
     throw new Error('Session expired')
   }
 
@@ -62,7 +59,6 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, retry = true
   return json.data as T
 }
 
-// ── Auth ──────────────────────────────────────────────────────────────────
 export async function register(body: { name: string; email: string; password: string; leetcode_username: string }) {
   const data = await apiFetch<any>('/api/auth/register', { method: 'POST', body: JSON.stringify(body) })
   setTokens(data.access_token, data.refresh_token)
@@ -83,11 +79,9 @@ export async function logout() {
   clearTokens()
 }
 
-// ── Users ─────────────────────────────────────────────────────────────────
 export const getMe = () => apiFetch<any>('/api/users/me')
-export const getUserStats = (id: string) => apiFetch<any>(`/api/users/${id}/stats`)
+export const getUserStats = (id: string) => apiFetch<any>(`/api/users/${id}`)
 
-// ── Leaderboard ───────────────────────────────────────────────────────────
 export const getLeaderboard = (params?: { challenge_id?: string; limit?: number }) => {
   const q = new URLSearchParams()
   if (params?.challenge_id) q.set('challenge_id', params.challenge_id)
@@ -95,26 +89,11 @@ export const getLeaderboard = (params?: { challenge_id?: string; limit?: number 
   return apiFetch<any>(`/api/leaderboard?${q}`)
 }
 
-// ── Challenges ────────────────────────────────────────────────────────────
-export const getChallenges = (status?: string) =>
-  apiFetch<any>(`/api/challenges${status ? `?status=${status}` : ''}`)
-
-export const createChallenge = (body: any) =>
-  apiFetch<any>('/api/challenges', { method: 'POST', body: JSON.stringify(body) })
-
-export const updateChallenge = (id: string, body: any) =>
-  apiFetch<any>(`/api/challenges/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
-
-export const deleteChallenge = (id: string) =>
-  apiFetch<any>(`/api/challenges/${id}`, { method: 'DELETE' })
-
-export const joinChallenge = (id: string) =>
-  apiFetch<any>(`/api/challenges/${id}/join`, { method: 'POST' })
-
-// ── Sync ──────────────────────────────────────────────────────────────────
-export const syncMe = (leetcode_username: string) =>
-  apiFetch<any>('/api/sync', { method: 'POST', body: JSON.stringify({ leetcode_username }) })
-
-// ── Admin ─────────────────────────────────────────────────────────────────
-export const getAdminStats  = () => apiFetch<any>('/api/admin/stats')
-export const getAdminUsers  = () => apiFetch<any>('/api/admin/users')
+export const getChallenges   = (status?: string) => apiFetch<any>(`/api/challenges${status ? `?status=${status}` : ''}`)
+export const createChallenge = (body: any) => apiFetch<any>('/api/challenges', { method: 'POST', body: JSON.stringify(body) })
+export const updateChallenge = (id: string, body: any) => apiFetch<any>(`/api/challenges/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
+export const deleteChallenge = (id: string) => apiFetch<any>(`/api/challenges/${id}`, { method: 'DELETE' })
+export const joinChallenge   = (id: string) => apiFetch<any>(`/api/challenges/${id}/join`, { method: 'POST' })
+export const syncMe          = (leetcode_username: string) => apiFetch<any>('/api/sync', { method: 'POST', body: JSON.stringify({ leetcode_username }) })
+export const getAdminStats   = () => apiFetch<any>('/api/admin/stats')
+export const getAdminUsers   = () => apiFetch<any>('/api/admin/users')
