@@ -1,15 +1,12 @@
 import type { Config } from 'tailwindcss'
 
 const config: Config = {
-  content: [
-    './app/**/*.{ts,tsx}',
-    './components/**/*.{ts,tsx}',
-  ],
+  content: ['./app/**/*.{ts,tsx}', './components/**/*.{ts,tsx}'],
   theme: {
     extend: {
       fontFamily: {
-        sans:  ['Syne', 'sans-serif'],
-        mono:  ['Space Mono', 'monospace'],
+        sans: ['Syne', 'sans-serif'],
+        mono: ['Space Mono', 'monospace'],
       },
       colors: {
         bg:       '#0a0a0f',
@@ -22,13 +19,12 @@ const config: Config = {
         muted:    '#7c7b90',
         danger:   '#f05a5a',
       },
-      keyframes: {
-        fadeUp: { '0%': { opacity: '0', transform: 'translateY(12px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
-        pulse2: { '0%,100%': { opacity: '1' }, '50%': { opacity: '0.4' } },
-      },
-      animation: {
-        'fade-up': 'fadeUp 0.4s ease forwards',
-        'pulse2':  'pulse2 2s ease-in-out infinite',
+      screens: {
+        xs: '375px',
+        sm: '640px',
+        md: '768px',
+        lg: '1024px',
+        xl: '1280px',
       },
     },
   },
