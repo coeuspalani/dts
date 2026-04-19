@@ -18,7 +18,6 @@ export async function POST(req: NextRequest) {
     const { data, error } = await supabaseAdmin.from('users')
       .select('id,leetcode_username').eq('leetcode_username', leetcode_username).single()
     if (error || !data) return serverError(`User "${leetcode_username}" not found`)
-    // Non-admin can only sync themselves
     if (!isCron && user?.role !== 'admin' && data.id !== user?.sub)
       return forbidden('You can only sync your own account')
     usersToSync = [data]
@@ -30,23 +29,41 @@ export async function POST(req: NextRequest) {
 
   const results: any[] = []
   const errors:  any[] = []
+  const today = new Date().toISOString().split('T')[0] // YYYY-MM-DD
 
   for (const u of usersToSync) {
     try {
       const s = await fetchLeetCodeStats(u.leetcode_username)
+
+      // Update users table
       const { error } = await supabaseAdmin.from('users').update({
-        solve_count: s.totalSolved, easy_solved: s.easySolved,
-        medium_solved: s.mediumSolved, hard_solved: s.hardSolved,
-        points: s.points, last_synced_at: new Date().toISOString(),
+        solve_count:    s.totalSolved,
+        easy_solved:    s.easySolved,
+        medium_solved:  s.mediumSolved,
+        hard_solved:    s.hardSolved,
+        points:         s.points,
+        last_synced_at: new Date().toISOString(),
       }).eq('id', u.id)
       if (error) throw error
+
+      // Upsert daily snapshot — one row per user per day
+      await supabaseAdmin.from('solve_history').upsert({
+        user_id:       u.id,
+        snapshot_date: today,
+        solve_count:   s.totalSolved,
+        easy_solved:   s.easySolved,
+        medium_solved: s.mediumSolved,
+        hard_solved:   s.hardSolved,
+        points:        s.points,
+      }, { onConflict: 'user_id,snapshot_date' })
+
       results.push({ leetcode_username: u.leetcode_username, ...s })
     } catch (e: any) {
       errors.push({ leetcode_username: u.leetcode_username, error: e.message })
     }
   }
 
-  // Re-rank all members
+  // Re-rank all members by points
   const { data: ranked } = await supabaseAdmin.from('users')
     .select('id').eq('role', 'member').order('points', { ascending: false })
   if (ranked) {
@@ -55,8 +72,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return ok({ synced: results.length, ranked_count: ranked?.length ?? 0,
-    synced_at: new Date().toISOString(), results, errors })
+  return ok({
+    synced: results.length,
+    ranked_count: ranked?.length ?? 0,
+    synced_at: new Date().toISOString(),
+    results,
+    errors,
+  })
 }
 
 // Vercel cron hits GET /api/sync
