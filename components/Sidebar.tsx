@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
-import { LayoutDashboard, Trophy, Settings, LogOut, Menu, X, Zap } from 'lucide-react'
+import { LayoutDashboard, Trophy, Settings, LogOut, Menu, X, Zap, BookOpen } from 'lucide-react'
 import clsx from 'clsx'
 
 export default function Sidebar() {
@@ -14,6 +14,7 @@ export default function Sidebar() {
   const nav = [
     { href: '/dashboard',   label: 'Dashboard',   icon: LayoutDashboard },
     { href: '/challenges', label: 'Challenges', icon: Zap },
+    { href: '/problems', label: 'Problems', icon: BookOpen },
     { href: '/leaderboard', label: 'Leaderboard', icon: Trophy },
     ...(user?.role === 'admin' ? [{ href: '/admin', label: 'Admin', icon: Settings }] : []),
   ]
