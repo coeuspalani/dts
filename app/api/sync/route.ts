@@ -95,11 +95,12 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── 1 SQL call replaces N UPDATE current_rank ─────────────────────────
-  await supabaseAdmin.rpc('rerank_users')
-
-  // ── 1 SQL call replaces K*M UPDATE rank_in_challenge ─────────────────
-  await supabaseAdmin.rpc('rerank_challenge_participants')
+  // ── All post-sync rankings in parallel ────────────────────────────────
+  await Promise.all([
+    supabaseAdmin.rpc('rerank_users'),
+    supabaseAdmin.rpc('rerank_challenge_participants'),
+    supabaseAdmin.rpc('update_all_streaks'),  // recalculate real streaks
+  ])
 
   return ok({
     synced:    results.length,

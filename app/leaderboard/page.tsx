@@ -106,26 +106,43 @@ export default function LeaderboardPage() {
           {/* Podium: order is 2nd | 1st | 3rd */}
           <div className="flex items-end justify-center gap-2 sm:gap-3">
             {[
-              { entry: top3[1], rank: 2, height: 'h-36', avatarSize: 'w-10 h-10', pts: 'text-xl', crown: null,   podiumLabel: '2nd' },
-              { entry: top3[0], rank: 1, height: 'h-48', avatarSize: 'w-14 h-14', pts: 'text-3xl', crown: '👑',  podiumLabel: '1st' },
-              { entry: top3[2], rank: 3, height: 'h-28', avatarSize: 'w-9 h-9',   pts: 'text-lg',  crown: null,  podiumLabel: '3rd' },
-            ].map(({ entry, rank, height, avatarSize, pts: ptsCls, crown, podiumLabel }) => {
+              { entry: top3[1], rank: 2, height: 'h-36', avatarSize: 'w-10 h-10', ptsSize: 'text-xl',   crown: null,  podiumLabel: '2nd' },
+              { entry: top3[0], rank: 1, height: 'h-48', avatarSize: 'w-14 h-14', ptsSize: 'text-2xl',  crown: '👑',  podiumLabel: '1st' },
+              { entry: top3[2], rank: 3, height: 'h-28', avatarSize: 'w-9 h-9',   ptsSize: 'text-lg',   crown: null,  podiumLabel: '3rd' },
+            ].map(({ entry, rank, height, avatarSize, ptsSize, crown, podiumLabel }) => {
               const rs = rankStyles[rank]
+              // Shorten name: first word + initial of last, max 10 chars
+              const nameParts  = entry.name.trim().split(/\s+/)
+              const shortName  = nameParts.length > 1
+                ? `${nameParts[0]} ${nameParts[nameParts.length - 1][0]}.`
+                : nameParts[0]
+              const displayName = shortName.length > 11 ? shortName.slice(0, 10) + '…' : shortName
+
               return (
-                <div key={rank} className={`flex-1 max-w-[200px] flex flex-col items-center ${height} rounded-2xl border ${rs.border} relative`}
+                <div key={rank}
+                  className={`flex-1 min-w-0 max-w-[160px] sm:max-w-[200px] flex flex-col items-center ${height} rounded-2xl border ${rs.border} relative overflow-hidden`}
                   style={{ background: rank === 1 ? 'linear-gradient(to bottom, rgba(245,200,66,0.12), transparent)' : rank === 2 ? 'rgba(255,255,255,0.04)' : 'rgba(251,146,60,0.06)' }}>
-                  {/* Avatar sits above card — use negative margin trick */}
-                  <div className={`${avatarSize} rounded-full flex items-center justify-center font-black text-white flex-shrink-0 mt-4 relative z-10`}
+
+                  {/* Avatar */}
+                  <div className={`${avatarSize} rounded-full flex-shrink-0 flex items-center justify-center font-black mt-4 relative z-10`}
                     style={{ background: rank === 1 ? 'rgba(245,200,66,0.2)' : rank === 2 ? 'rgba(255,255,255,0.1)' : 'rgba(251,146,60,0.15)', border: `1px solid ${rank === 1 ? 'rgba(245,200,66,0.4)' : rank === 2 ? 'rgba(255,255,255,0.15)' : 'rgba(251,146,60,0.3)'}` }}>
                     {crown
-                      ? <span className="text-xl">{crown}</span>
-                      : <span className={rank === 1 ? 'text-gold' : rank === 2 ? 'text-white/70' : 'text-orange-400'}>{entry.name[0]}</span>
+                      ? <span className="text-xl leading-none">{crown}</span>
+                      : <span className={`text-sm font-black ${rank === 1 ? 'text-gold' : rank === 2 ? 'text-white/70' : 'text-orange-400'}`}>
+                          {entry.name[0].toUpperCase()}
+                        </span>
                     }
                   </div>
-                  <div className="flex flex-col items-center justify-end flex-1 pb-4 px-2 w-full">
-                    <div className="text-[10px] font-mono text-white/30 mb-1">{podiumLabel}</div>
-                    <div className="text-xs sm:text-sm font-bold truncate w-full text-center">{entry.name}</div>
-                    <div className={`${ptsCls} font-black font-mono leading-none mt-1 ${rs.text}`}>{getPoints(entry)}</div>
+
+                  {/* Stats */}
+                  <div className="flex flex-col items-center justify-end flex-1 pb-3 px-2 w-full min-w-0">
+                    <div className="text-[9px] font-mono text-white/30 mb-0.5">{podiumLabel}</div>
+                    <div className="text-xs font-bold w-full text-center leading-tight" title={entry.name}>
+                      {displayName}
+                    </div>
+                    <div className={`${ptsSize} font-black font-mono leading-none mt-1 ${rs.text}`}>
+                      {getPoints(entry)}
+                    </div>
                     <div className="text-[9px] font-mono text-muted">pts</div>
                     <div className="text-[9px] font-mono text-muted mt-0.5">{getSolves(entry)} solves</div>
                   </div>

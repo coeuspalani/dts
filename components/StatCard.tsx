@@ -22,7 +22,7 @@ export default function StatCard({ label, value, sub, color = 'default', loading
   return (
     <div className="bg-surface border border-white/[0.07] rounded-xl p-4 hover:border-white/[0.12] transition-colors">
       <div className="text-[10px] font-mono text-muted uppercase tracking-widest mb-2">{label}</div>
-      <div className={clsx('text-2xl sm:text-3xl font-black leading-none count-up', {
+      <div className={clsx('text-2xl sm:text-3xl font-black leading-none count-up tabular-nums', {
         'text-white':   color === 'default',
         'text-accent':  color === 'accent',
         'text-accent2': color === 'green',
