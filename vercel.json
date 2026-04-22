@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "framework": "nextjs",
+  "crons": [
+    { "path": "/api/sync", "schedule": "0 0 * * *" }
+  ],
+  "functions": {
+    "app/api/**": { "maxDuration": 30 }
+  }
+}

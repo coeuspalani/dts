@@ -1,0 +1,78 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+
+body {
+  background: #0a0a0f;
+  color: #f0eff8;
+  font-family: 'Syne', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(124,106,247,0.25); border-radius: 2px; }
+
+input, select, textarea {
+  background: #16161f !important;
+  color: #f0eff8 !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+input:focus, select:focus {
+  border-color: #7c6af7 !important;
+  box-shadow: 0 0 0 3px rgba(124,106,247,0.12) !important;
+}
+::selection { background: rgba(124,106,247,0.3); }
+
+@keyframes shimmer {
+  0%   { background-position: -500px 0; }
+  100% { background-position: 500px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0.04) 25%,
+    rgba(255,255,255,0.09) 50%,
+    rgba(255,255,255,0.04) 75%
+  );
+  background-size: 500px 100%;
+  animation: shimmer 1.5s ease infinite;
+  border-radius: 6px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.7s linear infinite; }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-up   { animation: fadeUp 0.35s ease forwards; }
+.fade-up-1 { animation: fadeUp 0.35s ease 0.05s both; }
+.fade-up-2 { animation: fadeUp 0.35s ease 0.10s both; }
+.fade-up-3 { animation: fadeUp 0.35s ease 0.15s both; }
+.fade-up-4 { animation: fadeUp 0.35s ease 0.20s both; }
+.fade-up-5 { animation: fadeUp 0.35s ease 0.25s both; }
+
+@keyframes pulseDot {
+  0%,100% { opacity:1; transform:scale(1); }
+  50%     { opacity:0.3; transform:scale(0.75); }
+}
+.pulse-dot { animation: pulseDot 1.5s ease infinite; }
+
+@keyframes progressBar {
+  from { width: 0%; }
+}
+
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.count-up { animation: countUp 0.5s ease 0.3s both; }
