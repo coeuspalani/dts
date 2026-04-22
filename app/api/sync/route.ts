@@ -14,41 +14,58 @@ export async function POST(req: NextRequest) {
   let usersToSync: { id: string; leetcode_username: string }[] = []
 
   if (leetcode_username) {
-    const { data, error } = await supabaseAdmin.from('users')
-      .select('id,leetcode_username').eq('leetcode_username', leetcode_username).single()
+    const { data, error } = await supabaseAdmin
+      .from('users').select('id,leetcode_username')
+      .eq('leetcode_username', leetcode_username).single()
     if (error || !data) return serverError(`User "${leetcode_username}" not found`)
     if (!isCron && user?.role !== 'admin' && data.id !== user?.sub)
       return forbidden('You can only sync your own account')
     usersToSync = [data]
   } else {
     if (!isCron && user?.role !== 'admin') return forbidden('Admin or cron required')
-    const { data } = await supabaseAdmin.from('users').select('id,leetcode_username').eq('role', 'member')
+    const { data } = await supabaseAdmin
+      .from('users').select('id,leetcode_username').eq('role', 'member')
     usersToSync = data ?? []
   }
 
   const results: any[] = []
   const errors:  any[] = []
-  const now  = new Date()
+  const now   = new Date()
   const today = now.toISOString().split('T')[0]
+  const nowISO = now.toISOString()
 
-  for (const u of usersToSync) {
-    try {
-      const s = await fetchLeetCodeStats(u.leetcode_username)
+  // Fetch all LeetCode stats in parallel (rate-limit safe for small N)
+  const fetched = await Promise.allSettled(
+    usersToSync.map(u =>
+      fetchLeetCodeStats(u.leetcode_username).then(s => ({ u, s }))
+    )
+  )
 
-      // 1. Update users table
-      const { error: userErr } = await supabaseAdmin.from('users').update({
+  // Collect successful fetches for batch operations
+  const successful: { u: typeof usersToSync[0]; s: Awaited<ReturnType<typeof fetchLeetCodeStats>> }[] = []
+  for (const r of fetched) {
+    if (r.status === 'fulfilled') successful.push(r.value)
+    else errors.push({ error: String(r.reason) })
+  }
+
+  if (successful.length > 0) {
+    // ── Batch 1: Update all users in 1 upsert ──────────────────────────
+    await supabaseAdmin.from('users').upsert(
+      successful.map(({ u, s }) => ({
+        id:             u.id,
         solve_count:    s.totalSolved,
         easy_solved:    s.easySolved,
         medium_solved:  s.mediumSolved,
         hard_solved:    s.hardSolved,
         points:         s.points,
-        last_synced_at: now.toISOString(),
-      }).eq('id', u.id)
-      if (userErr) throw userErr
+        last_synced_at: nowISO,
+      })),
+      { onConflict: 'id' }
+    )
 
-      // 2. Insert new snapshot each sync (no upsert — allows multiple per day)
-      //    Weekly chart uses first vs latest snapshot of the day
-      await supabaseAdmin.from('solve_history').insert({
+    // ── Batch 2: Insert all snapshots in 1 insert ──────────────────────
+    await supabaseAdmin.from('solve_history').insert(
+      successful.map(({ u, s }) => ({
         user_id:       u.id,
         snapshot_date: today,
         solve_count:   s.totalSolved,
@@ -56,54 +73,40 @@ export async function POST(req: NextRequest) {
         medium_solved: s.mediumSolved,
         hard_solved:   s.hardSolved,
         points:        s.points,
-        snapshot_time: now.toISOString(),
-      })
+        snapshot_time: nowISO,
+      }))
+    )
 
-      // 3. Update ALL active challenge participations for this user
-      const { data: participations } = await supabaseAdmin
-        .from('challenge_participants')
-        .select('id, solve_count_at_start, points_at_start, challenges!inner(status)')
-        .eq('user_id', u.id)
-        .eq('challenges.status', 'active')
+    // ── Batch 3: Update all challenge participants via SQL function ─────
+    // One call per user (unavoidable — each user has different stats)
+    await Promise.all(
+      successful.map(({ u, s }) =>
+        supabaseAdmin.rpc('sync_challenge_participants', {
+          p_user_id:     u.id,
+          p_solve_count: s.totalSolved,
+          p_points:      s.points,
+          p_now:         nowISO,
+        })
+      )
+    )
 
-      for (const p of participations ?? []) {
-        const pointsDiff = Math.max(0, s.points - p.points_at_start)
-        await supabaseAdmin.from('challenge_participants').update({
-          solve_count_current: s.totalSolved,
-          points_earned:       pointsDiff,
-          updated_at:          now.toISOString(),
-        }).eq('id', p.id)
-      }
-
+    for (const { u, s } of successful) {
       results.push({ leetcode_username: u.leetcode_username, ...s })
-    } catch (e: any) {
-      errors.push({ leetcode_username: u.leetcode_username, error: e.message })
     }
   }
 
-  // 4. Re-rank globally
-  const { data: ranked } = await supabaseAdmin.from('users')
-    .select('id').eq('role', 'member').order('points', { ascending: false })
-  if (ranked) {
-    for (let i = 0; i < ranked.length; i++) {
-      await supabaseAdmin.from('users').update({ current_rank: i + 1 }).eq('id', ranked[i].id)
-    }
-  }
+  // ── 1 SQL call replaces N UPDATE current_rank ─────────────────────────
+  await supabaseAdmin.rpc('rerank_users')
 
-  // 5. Re-rank participants per active challenge
-  const { data: activeChallenges } = await supabaseAdmin.from('challenges').select('id').eq('status', 'active')
-  for (const challenge of activeChallenges ?? []) {
-    const { data: pts } = await supabaseAdmin
-      .from('challenge_participants').select('id')
-      .eq('challenge_id', challenge.id).order('points_earned', { ascending: false })
-    for (let i = 0; i < (pts ?? []).length; i++) {
-      await supabaseAdmin.from('challenge_participants')
-        .update({ rank_in_challenge: i + 1 }).eq('id', pts![i].id)
-    }
-  }
+  // ── 1 SQL call replaces K*M UPDATE rank_in_challenge ─────────────────
+  await supabaseAdmin.rpc('rerank_challenge_participants')
 
-  return ok({ synced: results.length, ranked_count: ranked?.length ?? 0,
-    synced_at: now.toISOString(), results, errors })
+  return ok({
+    synced:    results.length,
+    synced_at: nowISO,
+    results,
+    errors,
+  })
 }
 
 export async function GET(req: NextRequest) {
