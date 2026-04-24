@@ -1,8 +1,9 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import AppShell from '@/components/AppShell'
 import Spinner from '@/components/Spinner'
 import { useAuth } from '@/hooks/useAuth'
+import { useSyncListener } from '@/hooks/useSyncListener'
 import { getLeaderboard } from '@/lib/api-client'
 import type { Challenge } from '@/lib/types'
 import clsx from 'clsx'
@@ -29,6 +30,23 @@ export default function LeaderboardPage() {
   const [loading, setLoading]             = useState(true)
   const [challengeMode, setChallengeMode] = useState(false)
 
+  const loadLeaderboard = useCallback(async () => {
+    try {
+      setLoading(true)
+      const d = await getLeaderboard({ challenge_id: selectedChallenge || undefined, limit: 100 })
+      setEntries(d.entries ?? [])
+      setTotal(d.total ?? 0)
+      setChallengeMode(!!selectedChallenge)
+    } catch (err) {
+      console.error('[Leaderboard] Failed to fetch:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [selectedChallenge])
+
+  // Listen for sync events and refresh leaderboard
+  useSyncListener(loadLeaderboard)
+
   useEffect(() => {
     fetch('/api/challenges').then(r => r.json()).then(d => {
       setChallenges(d.data ?? [])
@@ -36,16 +54,8 @@ export default function LeaderboardPage() {
   }, [])
 
   useEffect(() => {
-    setLoading(true)
-    getLeaderboard({ challenge_id: selectedChallenge || undefined, limit: 100 })
-      .then(d => {
-        setEntries(d.entries ?? [])
-        setTotal(d.total ?? 0)
-        setChallengeMode(!!selectedChallenge)
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [selectedChallenge])
+    loadLeaderboard()
+  }, [selectedChallenge, loadLeaderboard])
 
   const myEntry = entries.find(e => (e.id ?? e.user_id) === user?.id)
   const myRank  = myEntry?.rank

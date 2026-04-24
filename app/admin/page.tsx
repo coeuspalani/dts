@@ -36,7 +36,7 @@ export default function AdminPage() {
 
   const load = useCallback(async () => {
     try {
-      const [s, c, u] = await Promise.all([getAdminStats(), getChallenges(), getAdminUsers()])
+      const [s, c, u] = await Promise.all([getAdminStats(), getChallenges('all'), getAdminUsers()])
       setStats(s); setChallenges(Array.isArray(c) ? c : []); setUsers(u.users ?? [])
     } catch {}
     finally { setStatsLoading(false); setUsersLoading(false) }

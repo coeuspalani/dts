@@ -24,59 +24,47 @@ export function useAuth() {
           return
         }
 
-        // Decode JWT to check expiry — no network needed
         try {
           const payload = JSON.parse(atob(accessToken.split('.')[1]))
           if (Date.now() < payload.exp * 1000) {
-            // Token still valid — restore instantly
             if (mountedRef.current) {
               setUser(JSON.parse(storedUser))
               setLoading(false)
             }
             return
           }
-        } catch {
-          // Malformed token — fall through to clear
-        }
+        } catch {}
 
-        // Access token expired — try silent refresh
+        // Token expired — try silent refresh
         const refresh = localStorage.getItem('dts_refresh')
         if (refresh) {
           try {
             const res  = await fetch('/api/auth/refresh', {
-              method:  'POST',
+              method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body:    JSON.stringify({ refresh_token: refresh }),
+              body: JSON.stringify({ refresh_token: refresh }),
             })
             const data = await res.json()
             if (data.success) {
               localStorage.setItem('dts_access',  data.data.access_token)
               localStorage.setItem('dts_refresh', data.data.refresh_token)
-              if (mountedRef.current) {
-                setUser(JSON.parse(storedUser))
-                setLoading(false)
-              }
+              if (mountedRef.current) { setUser(JSON.parse(storedUser)); setLoading(false) }
               return
             }
           } catch {
-            // Network error — still show user for offline tolerance
-            if (mountedRef.current) {
-              setUser(JSON.parse(storedUser))
-              setLoading(false)
-            }
+            // Network error — restore from cache anyway
+            if (mountedRef.current) { setUser(JSON.parse(storedUser)); setLoading(false) }
             return
           }
         }
 
-        // Refresh failed — clear everything
+        // All failed — clear
         localStorage.removeItem('dts_user')
         localStorage.removeItem('dts_access')
         localStorage.removeItem('dts_refresh')
       } catch {}
-
       if (mountedRef.current) setLoading(false)
     }
-
     restore()
   }, [])
 
@@ -94,16 +82,30 @@ export function useAuth() {
     return u
   }, [])
 
-  const logout = useCallback(async () => {
-    // Clear storage first — synchronously — before any async or state updates
+  const logout = useCallback(() => {
     localStorage.removeItem('dts_user')
     localStorage.removeItem('dts_access')
     localStorage.removeItem('dts_refresh')
-    // Fire-and-forget the API call — don't await it
     apiLogout().catch(() => {})
-    // Update state only if still mounted
     if (mountedRef.current) setUser(null)
   }, [])
 
-  return { user, loading, login, register, logout }
+  // ── refreshUser: fetch latest data from DB and update state + localStorage ──
+  // Call this after sync to make stats cards immediately show new values
+  const refreshUser = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('dts_access')
+      if (!token) return
+      const res  = await fetch('/api/users/me', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const json = await res.json()
+      if (json.success && mountedRef.current) {
+        localStorage.setItem('dts_user', JSON.stringify(json.data))
+        setUser(json.data)
+      }
+    } catch {}
+  }, [])
+
+  return { user, loading, login, register, logout, refreshUser }
 }

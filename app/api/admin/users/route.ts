@@ -11,8 +11,12 @@ export async function GET(req: NextRequest) {
   const offset = Number(searchParams.get('offset') ?? 0)
   const role   = searchParams.get('role')
 
-  let query = supabaseAdmin.from('users')
-    .select('id,name,email,leetcode_username,role,solve_count,easy_solved,medium_solved,hard_solved,points,current_rank,streak,last_synced_at,created_at,updated_at', { count: 'exact' })
+  let query = supabaseAdmin
+    .from('users')
+    .select(
+      'id,name,email,leetcode_username,role,solve_count,easy_solved,medium_solved,hard_solved,points,current_rank,streak,last_synced_at,created_at,updated_at',
+      { count: 'exact' }
+    )
     .order('current_rank', { ascending: true, nullsFirst: false })
     .range(offset, offset + limit - 1)
 

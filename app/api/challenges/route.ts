@@ -11,11 +11,16 @@ export async function GET(req: NextRequest) {
     .select('*')
     .order('start_date', { ascending: false })
 
-  // If no status filter → return active + upcoming (exclude completed/deleted)
-  if (status) {
-    query = query.eq('status', status)
+  // If no filter → return active + upcoming
+  // If status=all → return everything
+  // Otherwise → filter by exact status
+  if (!status || status === 'all') {
+    if (status !== 'all') {
+      query = query.in('status', ['active', 'upcoming'])
+    }
+    // status=all: no filter, return everything
   } else {
-    query = query.in('status', ['active', 'upcoming'])
+    query = query.eq('status', status)
   }
 
   const { data, error } = await query

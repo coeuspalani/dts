@@ -8,24 +8,22 @@ import { PageLoader } from '@/components/Spinner'
 interface LiveEntry { rank: number; name: string; points: number }
 
 export default function LoginPage() {
-  const router                = useRouter()
+  const router                             = useRouter()
   const { login, register, user, loading } = useAuth()
-  const [mode, setMode]       = useState<'login'|'register'>('login')
 
-  // Already logged in → go straight to dashboard
+  // ── ALL hooks must be declared before any conditional returns ──────────
+  const [mode, setMode]         = useState<'login'|'register'>('login')
+  const [submitting, setSubmit] = useState(false)
+  const [error, setError]       = useState('')
+  const [form, setForm]         = useState({ name:'', email:'', password:'', leetcode_username:'' })
+  const [liveData, setLiveData] = useState<{ entries: LiveEntry[]; challenge: string; daysLeft: string }|null>(null)
+
+  // Redirect if already logged in
   useEffect(() => {
     if (!loading && user) router.replace('/dashboard')
   }, [user, loading, router])
 
-  // Show loader while checking auth state
-  if (loading) return <PageLoader label="Checking session..." />
-  // If user exists, redirect is in progress — show nothing to avoid flash
-  if (user) return null
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError]           = useState('')
-  const [form, setForm]             = useState({ name:'', email:'', password:'', leetcode_username:'' })
-  const [liveData, setLiveData]     = useState<{ entries: LiveEntry[]; challenge: string; daysLeft: string }|null>(null)
-
+  // Fetch live leaderboard for the right panel
   useEffect(() => {
     async function fetchLive() {
       try {
@@ -49,24 +47,27 @@ export default function LoginPage() {
     fetchLive()
   }, [])
 
+  // ── Conditional renders AFTER all hooks ────────────────────────────────
+  if (loading) return <PageLoader label="Checking session..." />
+  if (user)    return null  // redirect in progress
+
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [k]: e.target.value }))
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(''); setSubmitting(true)
+    e.preventDefault(); setError(''); setSubmit(true)
     try {
       if (mode === 'login') await login(form.email, form.password)
       else await register({ name: form.name, email: form.email, password: form.password, leetcode_username: form.leetcode_username })
       router.replace('/dashboard')
     } catch (err: any) { setError(err.message ?? 'Something went wrong') }
-    finally { setSubmitting(false) }
+    finally { setSubmit(false) }
   }
 
   return (
     <div className="min-h-screen bg-bg flex flex-col lg:flex-row">
       {/* ── Left — form ── */}
       <div className="flex-1 flex flex-col justify-center px-6 sm:px-10 py-10 lg:max-w-md w-full mx-auto lg:mx-0">
-        {/* Logo */}
         <div className="mb-8">
           <div className="text-4xl sm:text-5xl font-black tracking-tight mb-1">
             D<span className="text-accent">T</span>S
@@ -148,7 +149,7 @@ export default function LoginPage() {
         )}
       </div>
 
-      {/* ── Right — live leaderboard (desktop only) ── */}
+      {/* ── Right — live leaderboard (desktop) ── */}
       <div className="hidden lg:flex flex-1 bg-surface border-l border-white/[0.07] flex-col justify-center items-center p-12 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-96 h-96 rounded-full bg-accent/5 blur-3xl pointer-events-none" />
         <div className="absolute bottom-0 left-0 w-64 h-64 rounded-full bg-accent2/5 blur-3xl pointer-events-none" />
@@ -156,7 +157,7 @@ export default function LoginPage() {
         <div className="w-full max-w-xs relative">
           <div className="flex items-center justify-between mb-4">
             <div className="text-[10px] font-mono text-muted uppercase tracking-widest">// live leaderboard</div>
-            {liveData && <div className="w-1.5 h-1.5 rounded-full bg-accent2 pulse-dot" title="Live" />}
+            {liveData && <div className="w-1.5 h-1.5 rounded-full bg-accent2 pulse-dot" />}
           </div>
 
           {liveData

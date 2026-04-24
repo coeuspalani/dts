@@ -49,8 +49,7 @@ export async function POST(req: NextRequest) {
 
   if (successful.length > 0) {
     // ── Update each user individually (UPDATE not upsert — rows always exist) ──
-    // Run in parallel — safe since each touches a different row
-    await Promise.all(
+    const updateResults = await Promise.all(
       successful.map(({ u, s }) =>
         supabaseAdmin.from('users').update({
           solve_count:    s.totalSolved,
@@ -63,8 +62,16 @@ export async function POST(req: NextRequest) {
       )
     )
 
+    // Check for update errors
+    for (const result of updateResults) {
+      if (result.error) {
+        console.error('[Sync] User update error:', result.error)
+        errors.push({ error: `Failed to update user: ${result.error.message}` })
+      }
+    }
+
     // ── Batch insert all snapshots ─────────────────────────────────────
-    await supabaseAdmin.from('solve_history').insert(
+    const { error: snapshotError } = await supabaseAdmin.from('solve_history').insert(
       successful.map(({ u, s }) => ({
         user_id:       u.id,
         snapshot_date: today,
@@ -76,9 +83,13 @@ export async function POST(req: NextRequest) {
         snapshot_time: nowISO,
       }))
     )
+    if (snapshotError) {
+      console.error('[Sync] Snapshot insert error:', snapshotError)
+      errors.push({ error: `Failed to save snapshot: ${snapshotError.message}` })
+    }
 
     // ── Update active challenge participants per user ──────────────────
-    await Promise.all(
+    const challengeResults = await Promise.all(
       successful.map(({ u, s }) =>
         supabaseAdmin.rpc('sync_challenge_participants', {
           p_user_id:     u.id,
@@ -88,6 +99,14 @@ export async function POST(req: NextRequest) {
         })
       )
     )
+    
+    // Check for RPC errors
+    for (const result of challengeResults) {
+      if (result.error) {
+        console.error('[Sync] Challenge sync RPC error:', result.error)
+        errors.push({ error: `Failed to sync challenge: ${result.error.message}` })
+      }
+    }
 
     for (const { u, s } of successful) {
       results.push({ leetcode_username: u.leetcode_username, ...s })
@@ -95,11 +114,19 @@ export async function POST(req: NextRequest) {
   }
 
   // ── All post-sync rankings in parallel ────────────────────────────────
-  await Promise.all([
+  const rankResults = await Promise.all([
     supabaseAdmin.rpc('rerank_users'),
     supabaseAdmin.rpc('rerank_challenge_participants'),
     supabaseAdmin.rpc('update_all_streaks'),
   ])
+
+  // Check for ranking errors
+  for (const result of rankResults) {
+    if (result.error) {
+      console.error('[Sync] Ranking RPC error:', result.error)
+      errors.push({ error: `Failed to update rankings: ${result.error.message}` })
+    }
+  }
 
   return ok({
     synced:    results.length,
