@@ -30,40 +30,40 @@ export async function POST(req: NextRequest) {
 
   const results: any[] = []
   const errors:  any[] = []
-  const now   = new Date()
-  const today = now.toISOString().split('T')[0]
+  const now    = new Date()
+  const today  = now.toISOString().split('T')[0]
   const nowISO = now.toISOString()
 
-  // Fetch all LeetCode stats in parallel (rate-limit safe for small N)
+  // Fetch all LeetCode stats in parallel
   const fetched = await Promise.allSettled(
     usersToSync.map(u =>
       fetchLeetCodeStats(u.leetcode_username).then(s => ({ u, s }))
     )
   )
 
-  // Collect successful fetches for batch operations
   const successful: { u: typeof usersToSync[0]; s: Awaited<ReturnType<typeof fetchLeetCodeStats>> }[] = []
   for (const r of fetched) {
     if (r.status === 'fulfilled') successful.push(r.value)
-    else errors.push({ error: String(r.reason) })
+    else errors.push({ error: String((r as any).reason) })
   }
 
   if (successful.length > 0) {
-    // ── Batch 1: Update all users in 1 upsert ──────────────────────────
-    await supabaseAdmin.from('users').upsert(
-      successful.map(({ u, s }) => ({
-        id:             u.id,
-        solve_count:    s.totalSolved,
-        easy_solved:    s.easySolved,
-        medium_solved:  s.mediumSolved,
-        hard_solved:    s.hardSolved,
-        points:         s.points,
-        last_synced_at: nowISO,
-      })),
-      { onConflict: 'id' }
+    // ── Update each user individually (UPDATE not upsert — rows always exist) ──
+    // Run in parallel — safe since each touches a different row
+    await Promise.all(
+      successful.map(({ u, s }) =>
+        supabaseAdmin.from('users').update({
+          solve_count:    s.totalSolved,
+          easy_solved:    s.easySolved,
+          medium_solved:  s.mediumSolved,
+          hard_solved:    s.hardSolved,
+          points:         s.points,
+          last_synced_at: nowISO,
+        }).eq('id', u.id)
+      )
     )
 
-    // ── Batch 2: Insert all snapshots in 1 insert ──────────────────────
+    // ── Batch insert all snapshots ─────────────────────────────────────
     await supabaseAdmin.from('solve_history').insert(
       successful.map(({ u, s }) => ({
         user_id:       u.id,
@@ -77,8 +77,7 @@ export async function POST(req: NextRequest) {
       }))
     )
 
-    // ── Batch 3: Update all challenge participants via SQL function ─────
-    // One call per user (unavoidable — each user has different stats)
+    // ── Update active challenge participants per user ──────────────────
     await Promise.all(
       successful.map(({ u, s }) =>
         supabaseAdmin.rpc('sync_challenge_participants', {
@@ -99,7 +98,7 @@ export async function POST(req: NextRequest) {
   await Promise.all([
     supabaseAdmin.rpc('rerank_users'),
     supabaseAdmin.rpc('rerank_challenge_participants'),
-    supabaseAdmin.rpc('update_all_streaks'),  // recalculate real streaks
+    supabaseAdmin.rpc('update_all_streaks'),
   ])
 
   return ok({
