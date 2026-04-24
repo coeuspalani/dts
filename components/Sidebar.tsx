@@ -5,45 +5,38 @@ import { useAuth } from '@/hooks/useAuth'
 import { LayoutDashboard, Trophy, Settings, LogOut, Menu, X, Zap, BookOpen } from 'lucide-react'
 import clsx from 'clsx'
 
-export default function Sidebar() {
-  const pathname        = usePathname()
-  const router          = useRouter()
-  const { user, logout} = useAuth()
-  const [open, setOpen] = useState(false)
+interface NavItem { href: string; label: string; icon: any }
 
-  const nav = [
-    { href: '/dashboard',   label: 'Dashboard',   icon: LayoutDashboard },
-    { href: '/challenges', label: 'Challenges', icon: Zap },
-    { href: '/problems', label: 'Problems', icon: BookOpen },
-    { href: '/leaderboard', label: 'Leaderboard', icon: Trophy },
-    ...(user?.role === 'admin' ? [{ href: '/admin', label: 'Admin', icon: Settings }] : []),
-  ]
+interface NavContentProps {
+  nav:        NavItem[]
+  pathname:   string
+  user:       any
+  onNavigate: (href: string) => void
+  onClose:    () => void
+  onLogout:   () => void
+}
 
-  const handleLogout = async () => {
-    await logout()
-    router.push('/login')
-  }
-
-  const NavContent = () => (
+// Extracted as a named function — NOT defined inside another component
+// Prevents React Error #310 (hooks inside nested component definitions)
+function NavContent({ nav, pathname, user, onNavigate, onClose, onLogout }: NavContentProps) {
+  return (
     <>
-      {/* Logo */}
       <div className="px-5 mb-8 flex items-center justify-between">
         <div>
           <div className="text-xl font-black tracking-tight">D<span className="text-accent">T</span>S</div>
           <div className="text-[9px] font-mono text-muted tracking-widest">// DARE TO SOLVE</div>
         </div>
-        <button onClick={() => setOpen(false)} className="md:hidden text-muted hover:text-white p-1">
+        <button onClick={onClose} className="md:hidden text-muted hover:text-white p-1">
           <X size={18} />
         </button>
       </div>
 
-      {/* Nav items */}
       <nav className="flex-1 px-2 space-y-0.5">
         {nav.map(({ href, label, icon: Icon }) => {
           const active = pathname === href
           return (
             <button key={href}
-              onClick={() => { router.push(href); setOpen(false) }}
+              onClick={() => { onNavigate(href); onClose() }}
               className={clsx(
                 'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left',
                 active
@@ -58,7 +51,6 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* User chip */}
       <div className="px-4 pt-4 mt-auto border-t border-white/[0.07]">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-accent to-purple-500 flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
@@ -71,7 +63,7 @@ export default function Sidebar() {
               <span className="text-[10px] font-mono text-muted">{user?.role}</span>
             </div>
           </div>
-          <button onClick={handleLogout} title="Logout"
+          <button onClick={onLogout} title="Logout"
             className="text-muted hover:text-danger transition-colors p-1.5 rounded-lg hover:bg-danger/10">
             <LogOut size={13} />
           </button>
@@ -79,6 +71,29 @@ export default function Sidebar() {
       </div>
     </>
   )
+}
+
+export default function Sidebar() {
+  const pathname        = usePathname()
+  const router          = useRouter()
+  const { user, logout} = useAuth()
+  const [open, setOpen] = useState(false)
+
+  const nav: NavItem[] = [
+    { href: '/dashboard',   label: 'Dashboard',   icon: LayoutDashboard },
+    { href: '/challenges',  label: 'Challenges',  icon: Zap },
+    { href: '/leaderboard', label: 'Leaderboard', icon: Trophy },
+    { href: '/problems',    label: 'Problems',    icon: BookOpen },
+    ...(user?.role === 'admin' ? [{ href: '/admin', label: 'Admin', icon: Settings }] : []),
+  ]
+
+  const handleNavigate = (href: string) => router.push(href)
+  const handleClose    = () => setOpen(false)
+
+  // Single logout handler — no double navigation
+  // useAuth.logout() clears storage + sets user=null
+  // AppShell detects user=null and does the redirect
+  const handleLogout = () => logout()
 
   return (
     <>
@@ -93,23 +108,26 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {/* Mobile overlay */}
+      {/* Mobile overlay drawer */}
       {open && (
         <div className="md:hidden fixed inset-0 z-50 flex">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setOpen(false)} />
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleClose} />
           <div className="relative w-64 bg-surface border-r border-white/[0.07] flex flex-col py-6 h-full fade-up">
-            <NavContent />
+            <NavContent
+              nav={nav} pathname={pathname} user={user}
+              onNavigate={handleNavigate} onClose={handleClose} onLogout={handleLogout}
+            />
           </div>
         </div>
       )}
 
       {/* Desktop sidebar */}
       <aside className="hidden md:flex w-[220px] flex-shrink-0 bg-surface border-r border-white/[0.07] flex-col py-6 h-screen sticky top-0">
-        <NavContent />
+        <NavContent
+          nav={nav} pathname={pathname} user={user}
+          onNavigate={handleNavigate} onClose={handleClose} onLogout={handleLogout}
+        />
       </aside>
-
-      {/* Mobile top bar spacer */}
-      <div className="md:hidden h-14 flex-shrink-0" />
     </>
   )
 }
