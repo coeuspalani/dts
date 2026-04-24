@@ -12,7 +12,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!loading) {
-      if (!user) { router.push('/login'); return }
+      if (!user) { router.replace('/login'); return }
       const t = setTimeout(() => setReady(true), 80)
       return () => clearTimeout(t)
     }

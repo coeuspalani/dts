@@ -3,17 +3,28 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
 import Spinner from '@/components/Spinner'
+import { PageLoader } from '@/components/Spinner'
 
 interface LiveEntry { rank: number; name: string; points: number }
 
 export default function LoginPage() {
-  const router              = useRouter()
-  const { login, register } = useAuth()
-  const [mode, setMode]     = useState<'login'|'register'>('login')
-  const [loading, setLoading]   = useState(false)
-  const [error, setError]       = useState('')
-  const [form, setForm]         = useState({ name:'', email:'', password:'', leetcode_username:'' })
-  const [liveData, setLiveData] = useState<{ entries: LiveEntry[]; challenge: string; daysLeft: string }|null>(null)
+  const router                = useRouter()
+  const { login, register, user, loading } = useAuth()
+  const [mode, setMode]       = useState<'login'|'register'>('login')
+
+  // Already logged in → go straight to dashboard
+  useEffect(() => {
+    if (!loading && user) router.replace('/dashboard')
+  }, [user, loading, router])
+
+  // Show loader while checking auth state
+  if (loading) return <PageLoader label="Checking session..." />
+  // If user exists, redirect is in progress — show nothing to avoid flash
+  if (user) return null
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError]           = useState('')
+  const [form, setForm]             = useState({ name:'', email:'', password:'', leetcode_username:'' })
+  const [liveData, setLiveData]     = useState<{ entries: LiveEntry[]; challenge: string; daysLeft: string }|null>(null)
 
   useEffect(() => {
     async function fetchLive() {
@@ -42,13 +53,13 @@ export default function LoginPage() {
     setForm(f => ({ ...f, [k]: e.target.value }))
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(''); setLoading(true)
+    e.preventDefault(); setError(''); setSubmitting(true)
     try {
       if (mode === 'login') await login(form.email, form.password)
       else await register({ name: form.name, email: form.email, password: form.password, leetcode_username: form.leetcode_username })
-      router.push('/dashboard')
+      router.replace('/dashboard')
     } catch (err: any) { setError(err.message ?? 'Something went wrong') }
-    finally { setLoading(false) }
+    finally { setSubmitting(false) }
   }
 
   return (
@@ -109,9 +120,9 @@ export default function LoginPage() {
             </div>
           )}
 
-          <button type="submit" disabled={loading}
+          <button type="submit" disabled={submitting}
             className="w-full py-3.5 bg-accent text-white font-bold rounded-xl hover:opacity-85 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-accent/20 mt-2">
-            {loading
+            {submitting
               ? <><Spinner size={16} color="#fff" />{mode === 'register' ? 'Verifying...' : 'Signing in...'}</>
               : mode === 'login' ? 'Enter the Arena →' : 'Join DTS →'
             }
