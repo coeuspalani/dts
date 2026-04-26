@@ -8,19 +8,23 @@ import { PageLoader } from './Spinner'
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
   const router            = useRouter()
-  const redirectedRef     = useRef(false)
+  const didRedirect       = useRef(false)
 
   useEffect(() => {
     if (loading) return
-    if (!user && !redirectedRef.current) {
-      redirectedRef.current = true
+    // Redirect to login if no user and haven't already redirected
+    if (!user && !didRedirect.current) {
+      didRedirect.current = true
       router.replace('/login')
     }
   }, [user, loading, router])
 
-  // Show loader while checking auth OR while redirect is in flight
-  if (loading || (!user && !redirectedRef.current)) return <PageLoader label="Loading..." />
-  if (!user) return null  // redirect in progress — render nothing
+  // Still loading auth state
+  if (loading) return <PageLoader label="Loading..." />
+
+  // No user — either sidebar already redirected or useEffect will
+  // Return null to avoid rendering dashboard content without auth
+  if (!user) return null
 
   return (
     <div className="flex min-h-screen bg-bg">

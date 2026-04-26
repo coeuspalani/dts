@@ -16,8 +16,6 @@ interface NavContentProps {
   onLogout:   () => void
 }
 
-// Extracted as a named function — NOT defined inside another component
-// Prevents React Error #310 (hooks inside nested component definitions)
 function NavContent({ nav, pathname, user, onNavigate, onClose, onLogout }: NavContentProps) {
   return (
     <>
@@ -33,7 +31,7 @@ function NavContent({ nav, pathname, user, onNavigate, onClose, onLogout }: NavC
 
       <nav className="flex-1 px-2 space-y-0.5">
         {nav.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href
+          const active = pathname.startsWith(href) && (href !== '/dashboard' || pathname === '/dashboard')
           return (
             <button key={href}
               onClick={() => { onNavigate(href); onClose() }}
@@ -93,10 +91,11 @@ export default function Sidebar() {
   const handleNavigate = (href: string) => router.push(href)
   const handleClose    = () => setOpen(false)
 
-  // Single logout handler — no double navigation
-  // useAuth.logout() clears storage + sets user=null
-  // AppShell detects user=null and does the redirect
-  const handleLogout = () => logout()
+  // Logout: clear state then immediately navigate — don't rely on useEffect in AppShell
+  const handleLogout = () => {
+    logout()                      // clears localStorage + sets user=null in useAuth
+    router.replace('/login')      // navigate immediately — no waiting for useEffect
+  }
 
   return (
     <>

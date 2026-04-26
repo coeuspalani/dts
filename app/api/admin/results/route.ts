@@ -2,8 +2,6 @@ import { NextRequest } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { getUser, ok, forbidden, serverError } from '@/lib/middleware'
 
-// GET /api/admin/results?challenge_id=xxx
-// Returns full results for a completed challenge — admin only
 export async function GET(req: NextRequest) {
   const user = await getUser(req)
   if (!user || user.role !== 'admin') return forbidden()
@@ -11,28 +9,44 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const challenge_id = searchParams.get('challenge_id')
 
+  // ── List all completed challenges ─────────────────────────────────────
   if (!challenge_id) {
-    // Return all completed challenges with result counts
-    const { data, error } = await supabaseAdmin
+    const { data: challenges, error } = await supabaseAdmin
       .from('challenges')
-      .select(`
-        id, title, status, start_date, end_date, duration_days,
-        challenge_results(count)
-      `)
+      .select('id, title, status, start_date, end_date, duration_days')
       .eq('status', 'completed')
       .order('end_date', { ascending: false })
 
-    if (error) return serverError()
+    if (error) return serverError('Failed to fetch challenges')
 
-    const enriched = (data ?? []).map((c: any) => ({
+    // Get result counts for each
+    const ids = (challenges ?? []).map(c => c.id)
+    const { data: counts } = await supabaseAdmin
+      .from('challenge_results')
+      .select('challenge_id')
+      .in('challenge_id', ids.length > 0 ? ids : ['00000000-0000-0000-0000-000000000000'])
+
+    // Also get participant counts as fallback
+    const { data: partCounts } = await supabaseAdmin
+      .from('challenge_participants')
+      .select('challenge_id')
+      .in('challenge_id', ids.length > 0 ? ids : ['00000000-0000-0000-0000-000000000000'])
+
+    const resultMap: Record<string, number>  = {}
+    const partMap:   Record<string, number>  = {}
+    for (const r of counts   ?? []) resultMap[r.challenge_id] = (resultMap[r.challenge_id] ?? 0) + 1
+    for (const p of partCounts ?? []) partMap[p.challenge_id]  = (partMap[p.challenge_id]  ?? 0) + 1
+
+    const enriched = (challenges ?? []).map(c => ({
       ...c,
-      participant_count: c.challenge_results?.[0]?.count ?? 0,
-      challenge_results: undefined,
+      participant_count: resultMap[c.id] ?? partMap[c.id] ?? 0,
+      finalized:         (resultMap[c.id] ?? 0) > 0,
     }))
+
     return ok(enriched)
   }
 
-  // Return full results for a specific challenge
+  // ── Results for a specific challenge ──────────────────────────────────
   const [challengeRes, resultsRes] = await Promise.all([
     supabaseAdmin.from('challenges')
       .select('id, title, status, start_date, end_date, duration_days')
@@ -43,15 +57,31 @@ export async function GET(req: NextRequest) {
       .order('final_rank', { ascending: true }),
   ])
 
-  if (challengeRes.error || !challengeRes.data) return serverError('Challenge not found')
+  if (challengeRes.error || !challengeRes.data) {
+    return serverError('Challenge not found')
+  }
 
-  return ok({
-    challenge: challengeRes.data,
-    results:   resultsRes.data ?? [],
-  })
+  let results = resultsRes.data ?? []
+
+  // ── Fallback: if challenge_results empty, auto-finalize from participants ──
+  if (results.length === 0 && challengeRes.data.status === 'completed') {
+    const { data: finalizeCount } = await supabaseAdmin
+      .rpc('finalize_challenge', { p_challenge_id: challenge_id })
+
+    if (finalizeCount && finalizeCount > 0) {
+      const { data: fresh } = await supabaseAdmin
+        .from('challenge_results')
+        .select('*')
+        .eq('challenge_id', challenge_id)
+        .order('final_rank', { ascending: true })
+      results = fresh ?? []
+    }
+  }
+
+  return ok({ challenge: challengeRes.data, results })
 }
 
-// POST /api/admin/results/resend — resend certificates for a challenge
+// POST — resend certificates
 export async function POST(req: NextRequest) {
   const user = await getUser(req)
   if (!user || user.role !== 'admin') return forbidden()
@@ -59,15 +89,11 @@ export async function POST(req: NextRequest) {
   const { challenge_id } = await req.json()
   if (!challenge_id) return serverError('challenge_id required')
 
-  // Reset sent flags so Edge Function resends
-  const { error } = await supabaseAdmin
+  await supabaseAdmin
     .from('challenge_results')
     .update({ certificate_sent: false, certificate_sent_at: null })
     .eq('challenge_id', challenge_id)
 
-  if (error) return serverError('Failed to reset certificate flags')
-
-  // Trigger Edge Function
   const edgeUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/send-certificates`
   try {
     const res  = await fetch(edgeUrl, {
