@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { serverError } from '@/lib/middleware'
+import { getUser, serverError } from '@/lib/middleware'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -13,6 +13,18 @@ export async function GET(req: NextRequest) {
   const headers = { 'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=60' }
 
   if (challenge_id) {
+    const { data: challenge, error: challengeError } = await supabaseAdmin
+      .from('challenges')
+      .select('status')
+      .eq('id', challenge_id)
+      .single()
+
+    if (challengeError || !challenge) return NextResponse.json({ success: false, error: 'Challenge not found' }, { status: 404 })
+    if (challenge.status === 'completed') {
+      const user = await getUser(req)
+      if (!user || user.role !== 'admin') return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 })
+    }
+
     const { data, error, count } = await supabaseAdmin
       .from('challenge_leaderboard')
       .select('rank,challenge_id,user_id,name,leetcode_username,solves_in_challenge,points_earned,rank_change',

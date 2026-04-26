@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
-import { LayoutDashboard, Trophy, Settings, LogOut, Menu, X, Zap, BookOpen } from 'lucide-react'
+import { LayoutDashboard, Trophy, Settings, LogOut, Menu, X, Zap, BookOpen, BarChart2 } from 'lucide-react'
 import clsx from 'clsx'
 
 interface NavItem { href: string; label: string; icon: any }
@@ -84,7 +84,10 @@ export default function Sidebar() {
     { href: '/challenges',  label: 'Challenges',  icon: Zap },
     { href: '/leaderboard', label: 'Leaderboard', icon: Trophy },
     { href: '/problems',    label: 'Problems',    icon: BookOpen },
-    ...(user?.role === 'admin' ? [{ href: '/admin', label: 'Admin', icon: Settings }] : []),
+    ...(user?.role === 'admin' ? [
+      { href: '/admin',         label: 'Admin',   icon: Settings  },
+      { href: '/admin/results', label: 'Results', icon: BarChart2 },
+    ] : []),
   ]
 
   const handleNavigate = (href: string) => router.push(href)

@@ -8,7 +8,8 @@ import Toast, { useToast } from '@/components/Toast'
 import Spinner from '@/components/Spinner'
 import { getAdminStats, getAdminUsers, getChallenges, createChallenge, updateChallenge, deleteChallenge } from '@/lib/api-client'
 import type { Challenge, User } from '@/lib/types'
-import { Trash2, Pause, Play, CheckCircle, RefreshCw, Plus, X } from 'lucide-react'
+import { Trash2, Pause, Play, CheckCircle, RefreshCw, Plus, X, BarChart2 } from 'lucide-react'
+import Link from 'next/link'
 import clsx from 'clsx'
 
 const statusColors: Record<string, string> = {
@@ -59,6 +60,27 @@ export default function AdminPage() {
   }
 
   const handleStatus = async (id: string, status: string) => {
+    if (status === 'completed') {
+      // Use dedicated end-challenge endpoint that snapshots results + sends certs
+      if (!confirm('End this challenge? Results will be finalized and certificates emailed to all participants.')) return
+      setSyncing(id)
+      try {
+        const token = localStorage.getItem('dts_access')
+        const res   = await fetch(`/api/challenges/${id}/end`, {
+          method:  'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        })
+        const data = await res.json()
+        if (data.success) {
+          await load()
+          show(`✓ Challenge ended. ${data.data.participants_finalized} results saved. ${data.data.certificates_sent} certificates sent.`)
+        } else {
+          show(data.error ?? 'Failed to end challenge', 'error')
+        }
+      } catch (e: any) { show(e.message, 'error') }
+      finally { setSyncing(null) }
+      return
+    }
     try { await updateChallenge(id, { status }); await load(); show(`Challenge ${status}`) }
     catch (e: any) { show(e.message, 'error') }
   }
@@ -105,6 +127,11 @@ export default function AdminPage() {
           {showForm ? <X size={13} /> : <Plus size={13} />}
           <span className="hidden sm:inline">{showForm ? 'Cancel' : 'New Challenge'}</span>
         </button>
+        <Link href="/admin/results"
+          className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-surface border border-white/[0.07] text-xs sm:text-sm font-semibold rounded-lg hover:border-accent/40 transition-all text-muted hover:text-white">
+          <BarChart2 size={13} />
+          <span className="hidden sm:inline">Results</span>
+        </Link>
       </div>
 
       {/* Stats */}
@@ -179,7 +206,13 @@ export default function AdminPage() {
                     {c.status === 'active'  && <button onClick={() => handleStatus(c.id,'paused')}    className="p-1.5 rounded-md text-muted hover:text-yellow-400 hover:bg-yellow-400/10 transition-all" title="Pause"><Pause size={13} /></button>}
                     {c.status === 'paused'  && <button onClick={() => handleStatus(c.id,'active')}    className="p-1.5 rounded-md text-muted hover:text-accent2 hover:bg-accent2/10 transition-all" title="Resume"><Play size={13} /></button>}
                     {(c.status === 'active' || c.status === 'paused') &&
-                      <button onClick={() => handleStatus(c.id,'completed')} className="p-1.5 rounded-md text-muted hover:text-accent hover:bg-accent/10 transition-all" title="End"><CheckCircle size={13} /></button>}
+                      <button onClick={() => handleStatus(c.id,'completed')} disabled={syncing === c.id} className="p-1.5 rounded-md text-muted hover:text-accent hover:bg-accent/10 transition-all disabled:opacity-40" title="End Challenge">
+                        {syncing === c.id ? <Spinner size={13} /> : <CheckCircle size={13} />}
+                      </button>}
+                    {c.status === 'completed' &&
+                      <Link href="/admin/results" className="p-1.5 rounded-md text-muted hover:text-accent2 hover:bg-accent2/10 transition-all" title="View Results">
+                        <BarChart2 size={13} />
+                      </Link>}
                     <button onClick={() => handleDelete(c.id)} className="p-1.5 rounded-md text-muted hover:text-danger hover:bg-danger/10 transition-all" title="Delete"><Trash2 size={13} /></button>
                   </div>
                 </div>

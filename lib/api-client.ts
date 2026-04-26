@@ -151,3 +151,4 @@ export const joinChallenge   = (id: string) => apiFetch<any>(`/api/challenges/${
 export const syncMe          = (leetcode_username: string) => apiFetch<any>('/api/sync', { method: 'POST', body: JSON.stringify({ leetcode_username }) })
 export const getAdminStats   = () => apiFetch<any>('/api/admin/stats')
 export const getAdminUsers   = () => apiFetch<any>('/api/admin/users')
+export const getAdminChallengeLeaderboard = (id: string) => apiFetch<any>(`/api/admin/challenges/${id}/leaderboard`)
