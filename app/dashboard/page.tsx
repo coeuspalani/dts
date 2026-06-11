@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { useAuth } from '@/hooks/useAuth'
+import { useSync } from '@/hooks/useSync'
 import AppShell from '@/components/AppShell'
 import StatCard from '@/components/StatCard'
 import ChallengeCard from '@/components/ChallengeCard'
@@ -8,14 +9,14 @@ import LeaderboardTable from '@/components/LeaderboardTable'
 import Toast, { useToast } from '@/components/Toast'
 import Spinner from '@/components/Spinner'
 import type { LeaderboardEntry } from '@/lib/types'
-import { RefreshCw, ArrowRight } from 'lucide-react'
+import { RefreshCw, ArrowRight, CheckCircle2, AlertCircle } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import Link from 'next/link'
 
 interface DashChallenge {
   id: string; title: string; status: string
   start_date: string; end_date: string; duration_days: number
-  joined: boolean; solve_count_at_start: number; points_earned: number
+  joined: boolean; points_earned: number
 }
 interface WeeklyDay {
   day: string; date: string; solves: number
@@ -23,92 +24,95 @@ interface WeeklyDay {
 }
 
 export default function DashboardPage() {
-  const { user, refreshUser }           = useAuth()
-  const { toast, show, hide }           = useToast()
-  const [lb, setLb]                     = useState<LeaderboardEntry[]>([])
-  const [challenges, setChallenges]     = useState<DashChallenge[]>([])
-  const [syncing, setSyncing]           = useState(false)
-  const [weeklyData, setWeeklyData]     = useState<WeeklyDay[]>([])
-  const [pageLoading, setPageLoading]   = useState(true)
+  const { user, refreshUser }             = useAuth()
+  const { syncing, syncUser, error: syncErr } = useSync()
+  const { toast, show, hide }             = useToast()
+  const [lb, setLb]                       = useState<LeaderboardEntry[]>([])
+  const [challenges, setChallenges]       = useState<DashChallenge[]>([])
+  const [weeklyData, setWeeklyData]       = useState<WeeklyDay[]>([])
+  const [pageLoading, setPageLoading]     = useState(true)
   const [weeklyLoading, setWeeklyLoading] = useState(true)
+  const [syncDetails, setSyncDetails]     = useState<{ solved: number; points: number } | null>(null)
 
-  // Always read from user state — refreshUser() keeps it current
   const myEntry = lb.find(e => e.id === user?.id)
-
-  const getToken = useCallback(
-    () => localStorage.getItem('dts_access') ?? '', []
-  )
+  const token   = () => localStorage.getItem('dts_access') ?? ''
 
   const fetchWeekly = useCallback(async () => {
     setWeeklyLoading(true)
     try {
-      const res  = await fetch('/api/users/me/weekly', {
-        headers: { Authorization: `Bearer ${getToken()}` }
-      })
+      const res  = await fetch('/api/users/me/weekly', { headers: { Authorization: `Bearer ${token()}` } })
       const json = await res.json()
       if (json.success) setWeeklyData(json.data)
     } catch {} finally { setWeeklyLoading(false) }
-  }, [getToken])
+  }, [])
 
   const loadDashboard = useCallback(async () => {
     try {
-      const res  = await fetch('/api/dashboard', {
-        headers: { Authorization: `Bearer ${getToken()}` }
-      })
+      const res  = await fetch('/api/dashboard', { headers: { Authorization: `Bearer ${token()}` } })
       const json = await res.json()
       if (json.success) {
         setLb(json.data.leaderboard ?? [])
-        setChallenges(
-          (json.data.challenges ?? []).filter((c: DashChallenge) => c.status === 'active')
-        )
+        setChallenges((json.data.challenges ?? []).filter((c: DashChallenge) => c.status === 'active'))
       }
     } catch {} finally { setPageLoading(false) }
-  }, [getToken])
+  }, [])
 
-  useEffect(() => {
-    loadDashboard()
-    fetchWeekly()
-  }, [loadDashboard, fetchWeekly])
+  useEffect(() => { loadDashboard(); fetchWeekly() }, [loadDashboard, fetchWeekly])
 
+  // ── The sync handler — this is the critical path ──────────────────────
   const handleSync = async () => {
-    if (!user?.leetcode_username) return
-    setSyncing(true)
-    try {
-      const res  = await fetch('/api/sync', {
-        method:  'POST',
-        headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ leetcode_username: user.leetcode_username }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.error)
+    if (!user?.leetcode_username) {
+      show('No LeetCode username found on your account', 'error')
+      return
+    }
 
-      // Refresh in parallel: user stats + dashboard data + weekly chart
-      await Promise.all([
-        refreshUser(),      // updates user state → StatCards re-render with new values
-        loadDashboard(),    // updates leaderboard + challenges
-        fetchWeekly(),      // updates weekly chart
-      ])
-      show('Synced from LeetCode!')
-    } catch (e: any) {
-      show(e.message ?? 'Sync failed', 'error')
-    } finally {
-      setSyncing(false)
+    // 1. Call sync API — fetches from LeetCode + writes to DB
+    const result = await syncUser(user.leetcode_username)
+
+    if (!result) {
+      // syncUser sets error state, show it
+      show(syncErr ?? 'Sync failed — check your LeetCode username', 'error')
+      return
+    }
+
+    const synced = result.results[0]
+    if (!synced) {
+      show('LeetCode returned no data', 'error')
+      return
+    }
+
+    // 2. Fetch fresh user data from DB (after sync wrote to it)
+    //    refreshUser() → hits /api/users/me → reads DB → updates useAuth state + localStorage
+    await refreshUser()
+
+    // 3. Refresh dashboard data (leaderboard + challenges)
+    await Promise.all([loadDashboard(), fetchWeekly()])
+
+    // 4. Show what changed
+    const prevSolves = user.solve_count ?? 0
+    const newSolves  = synced.totalSolved
+    const diff       = newSolves - prevSolves
+
+    setSyncDetails({ solved: newSolves, points: synced.points })
+
+    if (diff > 0) {
+      show(`+${diff} new solve${diff > 1 ? 's' : ''} synced! 🎉`)
+    } else {
+      show(`Synced — ${newSolves} total solves, ${synced.points} pts`)
     }
   }
 
   const handleJoin = async (challengeId: string) => {
     const res  = await fetch(`/api/challenges/${challengeId}/join`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+      method:  'POST',
+      headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
     })
     const data = await res.json()
     if (data.success) {
-      setChallenges(prev =>
-        prev.map(c => c.id === challengeId ? { ...c, joined: true } : c)
-      )
-      show(data.data.already_joined ? 'Already participating!' : 'Joined!')
+      setChallenges(prev => prev.map(c => c.id === challengeId ? { ...c, joined: true } : c))
+      show(data.data.already_joined ? 'Already participating!' : 'Joined! 🚀')
     } else {
-      show(data.error ?? 'Failed', 'error')
+      show(data.error ?? 'Failed to join', 'error')
     }
   }
 
@@ -123,25 +127,41 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-xl sm:text-2xl font-black">Dashboard</h1>
           <p className="text-[10px] font-mono text-muted mt-0.5">
-            // {challenges.length > 0
-              ? `${challenges.length} ACTIVE CHALLENGE${challenges.length > 1 ? 'S' : ''}`
-              : 'NO ACTIVE CHALLENGES'}
+            {user?.last_synced_at
+              ? `// last synced ${new Date(user.last_synced_at).toLocaleTimeString()}`
+              : '// never synced'}
           </p>
         </div>
-        <button onClick={handleSync} disabled={syncing}
-          className="flex-shrink-0 flex items-center gap-2 px-3 sm:px-4 py-2 bg-surface border border-white/[0.07] rounded-lg text-xs sm:text-sm font-semibold hover:border-accent/40 transition-all disabled:opacity-50">
-          {syncing ? <Spinner size={13} /> : <RefreshCw size={13} />}
-          <span className="hidden sm:inline">{syncing ? 'Syncing...' : 'Sync LeetCode'}</span>
-          <span className="sm:hidden">{syncing ? '...' : 'Sync'}</span>
+
+        <button
+          onClick={handleSync}
+          disabled={syncing}
+          className="flex-shrink-0 flex items-center gap-2 px-3 sm:px-4 py-2 bg-surface border border-white/[0.07] rounded-lg text-xs sm:text-sm font-semibold hover:border-accent/50 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          {syncing
+            ? <><Spinner size={13} /><span>Syncing LeetCode...</span></>
+            : <><RefreshCw size={13} /><span className="hidden sm:inline">Sync LeetCode</span><span className="sm:hidden">Sync</span></>
+          }
         </button>
       </div>
 
-      {/* Stats — read from user state which refreshUser() keeps fresh */}
+      {/* Sync result banner */}
+      {syncDetails && !syncing && (
+        <div className="flex items-center gap-3 px-4 py-3 bg-accent2/[0.08] border border-accent2/20 rounded-xl mb-4 fade-up">
+          <CheckCircle2 size={15} className="text-accent2 flex-shrink-0" />
+          <span className="text-sm text-accent2 font-mono">
+            {syncDetails.solved} total solves · {syncDetails.points} points — fully updated
+          </span>
+          <button onClick={() => setSyncDetails(null)} className="ml-auto text-muted hover:text-white text-xs">✕</button>
+        </div>
+      )}
+
+      {/* Stats — these read from user state, updated by refreshUser() after sync */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 mb-4 fade-up-1">
         <StatCard
           loading={pageLoading}
           label="Rank"
-          value={myEntry?.rank ? `#${myEntry.rank}` : (user?.current_rank ? `#${user.current_rank}` : '—')}
+          value={myEntry?.rank ? `#${myEntry.rank}` : user?.current_rank ? `#${user.current_rank}` : '—'}
           sub="global standing"
           color="gold"
         />
@@ -171,13 +191,10 @@ export default function DashboardPage() {
       <div className="mb-4 fade-up-2">
         <div className="flex items-center justify-between mb-2">
           <div className="text-[10px] font-mono text-muted uppercase tracking-widest flex items-center gap-2">
-            {challenges.length > 0 && (
-              <div className="w-1.5 h-1.5 rounded-full bg-accent2 pulse-dot" />
-            )}
+            {challenges.length > 0 && <div className="w-1.5 h-1.5 rounded-full bg-accent2 pulse-dot" />}
             // active challenges
           </div>
-          <Link href="/challenges"
-            className="flex items-center gap-1 text-[11px] font-mono text-accent hover:opacity-70 transition-opacity">
+          <Link href="/challenges" className="flex items-center gap-1 text-[11px] font-mono text-accent hover:opacity-70 transition-opacity">
             All <ArrowRight size={11} />
           </Link>
         </div>
@@ -186,105 +203,74 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {[0,1].map(i => (
               <div key={i} className="bg-surface border border-white/[0.07] rounded-xl p-5 space-y-3">
-                <div className="skeleton h-4 w-16" />
-                <div className="skeleton h-5 w-48" />
-                <div className="skeleton h-2 w-full" />
+                <div className="skeleton h-4 w-16" /><div className="skeleton h-5 w-48" /><div className="skeleton h-2 w-full" />
               </div>
             ))}
           </div>
         ) : challenges.length > 0 ? (
-          <div className={`grid gap-3 ${
-            challenges.length === 1 ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
-          }`}>
+          <div className={`grid gap-3 ${challenges.length === 1 ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'}`}>
             {challenges.map(c => (
-              <ChallengeCard
-                key={c.id}
-                challenge={c as any}
-                onJoin={() => handleJoin(c.id)}
-                joined={c.joined}
-              />
+              <ChallengeCard key={c.id} challenge={c as any} onJoin={() => handleJoin(c.id)} joined={c.joined} />
             ))}
           </div>
         ) : (
           <div className="bg-surface border border-white/[0.07] rounded-xl p-6 flex flex-col items-center justify-center gap-2 min-h-[100px]">
             <p className="text-sm text-muted font-mono">No active challenges</p>
-            {user?.role === 'admin' && (
-              <Link href="/admin" className="text-xs font-mono text-accent hover:opacity-70">
-                Create one →
-              </Link>
-            )}
+            {user?.role === 'admin' && <Link href="/admin" className="text-xs font-mono text-accent hover:opacity-70">Create one →</Link>}
           </div>
         )}
       </div>
 
-      {/* Weekly solve chart */}
+      {/* Weekly chart */}
       <div className="bg-surface border border-white/[0.07] rounded-xl p-4 sm:p-5 mb-4 fade-up-3">
         <div className="flex items-center justify-between mb-3">
-          <div className="text-[10px] font-mono text-muted uppercase tracking-widest">
-            // solves this week
-          </div>
-          <div className="text-[10px] font-mono text-accent2 font-bold">
+          <div className="text-[10px] font-mono text-muted uppercase tracking-widest">// solves this week</div>
+          <div className="text-[10px] font-mono text-accent2 font-bold tabular-nums">
             {weeklyData.reduce((a, d) => a + d.solves, 0)} total
           </div>
         </div>
 
         {weeklyLoading ? (
-          <div className="h-[100px] flex items-center justify-center">
-            <Spinner size={20} />
-          </div>
+          <div className="h-[100px] flex items-center justify-center"><Spinner size={20} /></div>
         ) : weeklyData.every(d => d.solves === 0) ? (
           <div className="h-[100px] flex flex-col items-center justify-center gap-2">
-            <p className="text-xs font-mono text-muted">No activity tracked yet</p>
-            <button onClick={handleSync} disabled={syncing}
-              className="text-[11px] font-mono text-accent hover:opacity-70 flex items-center gap-1">
-              {syncing && <Spinner size={10} />}
-              Sync to start tracking →
+            <p className="text-xs font-mono text-muted">No activity yet — sync after solving problems</p>
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              className="text-[11px] font-mono text-accent hover:opacity-70 flex items-center gap-1"
+            >
+              {syncing ? <Spinner size={10} /> : <RefreshCw size={10} />}
+              Sync now to track →
             </button>
           </div>
         ) : (
           <>
             <ResponsiveContainer width="100%" height={100}>
-              <BarChart data={weeklyData} barCategoryGap="25%">
-                <XAxis
-                  dataKey="day"
-                  tick={{ fill: '#7c7b90', fontSize: 9, fontFamily: 'Space Mono' }}
-                  axisLine={false} tickLine={false}
-                />
+              <BarChart data={weeklyData} barCategoryGap="28%">
+                <XAxis dataKey="day" tick={{ fill: '#7c7b90', fontSize: 9, fontFamily: 'Space Mono' }} axisLine={false} tickLine={false} />
                 <YAxis hide domain={[0, maxSolves + 1]} />
                 <Tooltip
-                  contentStyle={{
-                    background: '#16161f',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: 8,
-                    fontFamily: 'Space Mono',
-                    fontSize: 10,
-                  }}
-                  formatter={(v: any, _: any, p: any) => [
-                    `${v} (${p.payload.easy}E ${p.payload.medium}M ${p.payload.hard}H)`,
-                    'Solved',
-                  ]}
+                  contentStyle={{ background: '#16161f', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontFamily: 'Space Mono', fontSize: 10 }}
+                  formatter={(v: any, _: any, p: any) => [`${v} (${p.payload.easy}E ${p.payload.medium}M ${p.payload.hard}H)`, 'Solved']}
                   labelStyle={{ color: '#7c7b90' }}
                   cursor={{ fill: 'rgba(255,255,255,0.03)' }}
                 />
                 <Bar dataKey="solves" radius={[3, 3, 0, 0]}>
                   {weeklyData.map((d, i) => (
-                    <Cell
-                      key={i}
-                      fill={d.solves === maxSolves ? '#5de0b0' : '#7c6af7'}
-                      opacity={d.solves === 0 ? 0.15 : 0.85}
-                    />
+                    <Cell key={i} fill={d.solves === maxSolves ? '#5de0b0' : '#7c6af7'} opacity={d.solves === 0 ? 0.15 : 0.85} />
                   ))}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
             <div className="flex justify-around pt-3 mt-2 border-t border-white/[0.05]">
               {[
-                ['Easy', weeklyData.reduce((a, d) => a + d.easy,   0), 'text-accent2'],
+                ['Easy', weeklyData.reduce((a, d) => a + d.easy, 0),   'text-accent2'],
                 ['Med',  weeklyData.reduce((a, d) => a + d.medium, 0), 'text-gold'],
-                ['Hard', weeklyData.reduce((a, d) => a + d.hard,   0), 'text-danger'],
+                ['Hard', weeklyData.reduce((a, d) => a + d.hard, 0),   'text-danger'],
               ].map(([l, v, c]) => (
                 <div key={l as string} className="text-center">
-                  <div className={`text-sm font-bold font-mono ${c}`}>{v}</div>
+                  <div className={`text-sm font-bold font-mono tabular-nums ${c}`}>{v}</div>
                   <div className="text-[9px] font-mono text-muted uppercase tracking-widest">{l}</div>
                 </div>
               ))}
@@ -296,20 +282,12 @@ export default function DashboardPage() {
       {/* Leaderboard preview */}
       <div className="bg-surface border border-white/[0.07] rounded-xl overflow-hidden fade-up-4">
         <div className="flex items-center justify-between px-4 sm:px-5 py-3.5 border-b border-white/[0.07]">
-          <div className="text-[10px] font-mono text-muted uppercase tracking-widest">
-            // global top 5
-          </div>
-          <Link href="/leaderboard"
-            className="flex items-center gap-1 text-[11px] font-mono text-accent hover:opacity-70 transition-opacity">
+          <div className="text-[10px] font-mono text-muted uppercase tracking-widest">// global top 5</div>
+          <Link href="/leaderboard" className="flex items-center gap-1 text-[11px] font-mono text-accent hover:opacity-70 transition-opacity">
             Full board <ArrowRight size={11} />
           </Link>
         </div>
-        <LeaderboardTable
-          entries={lb}
-          currentUserId={user?.id}
-          compact
-          loading={pageLoading}
-        />
+        <LeaderboardTable entries={lb} currentUserId={user?.id} compact loading={pageLoading} />
       </div>
     </AppShell>
   )

@@ -1,145 +1,204 @@
-import { NextRequest } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
 import { fetchLeetCodeStats } from '@/lib/leetcode'
-import { getUser, ok, unauthorized, forbidden, serverError } from '@/lib/middleware'
 
+// Use service role — bypasses RLS, can write to users table
+function getAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) throw new Error('Missing Supabase env vars')
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
+}
+
+// POST /api/sync
+// Body: { leetcode_username: string }  → sync one user
+// Body: {}                             → sync all (admin/cron only)
 export async function POST(req: NextRequest) {
   const isCron = req.headers.get('x-sync-secret') === process.env.SYNC_SECRET
-  const user   = isCron ? null : await getUser(req)
-  if (!isCron && !user) return unauthorized()
+
+  // Auth check
+  let callerId: string | null = null
+  let callerRole: string | null = null
+
+  if (!isCron) {
+    const auth = req.headers.get('authorization')
+    if (!auth?.startsWith('Bearer ')) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const token = auth.slice(7)
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]))
+      callerId   = payload.sub
+      callerRole = payload.role
+    } catch {
+      return NextResponse.json({ success: false, error: 'Invalid token' }, { status: 401 })
+    }
+  }
 
   const body = await req.json().catch(() => ({}))
   const { leetcode_username } = body
 
-  let usersToSync: { id: string; leetcode_username: string }[] = []
+  const db = getAdmin()
+
+  // ── Determine which users to sync ─────────────────────────────────────
+  let usersToSync: { id: string; leetcode_username: string; name: string }[] = []
 
   if (leetcode_username) {
-    const { data, error } = await supabaseAdmin
-      .from('users').select('id,leetcode_username')
-      .eq('leetcode_username', leetcode_username).single()
-    if (error || !data) return serverError(`User "${leetcode_username}" not found`)
-    if (!isCron && user?.role !== 'admin' && data.id !== user?.sub)
-      return forbidden('You can only sync your own account')
+    // Sync specific user
+    const { data, error } = await db
+      .from('users')
+      .select('id, leetcode_username, name')
+      .eq('leetcode_username', leetcode_username)
+      .single()
+
+    if (error || !data) {
+      return NextResponse.json({
+        success: false,
+        error: `User "${leetcode_username}" not found in DB. Make sure they registered first.`,
+      }, { status: 404 })
+    }
+
+    // Non-admin can only sync themselves
+    if (!isCron && callerRole !== 'admin' && data.id !== callerId) {
+      return NextResponse.json({ success: false, error: 'Can only sync your own account' }, { status: 403 })
+    }
+
     usersToSync = [data]
   } else {
-    if (!isCron && user?.role !== 'admin') return forbidden('Admin or cron required')
-    const { data } = await supabaseAdmin
-      .from('users').select('id,leetcode_username').eq('role', 'member')
+    // Sync all — admin or cron only
+    if (!isCron && callerRole !== 'admin') {
+      return NextResponse.json({ success: false, error: 'Admin required to sync all' }, { status: 403 })
+    }
+
+    const { data, error } = await db
+      .from('users')
+      .select('id, leetcode_username, name')
+      .eq('role', 'member')
+
+    if (error) {
+      return NextResponse.json({ success: false, error: 'Failed to fetch users: ' + error.message }, { status: 500 })
+    }
     usersToSync = data ?? []
   }
 
+  if (usersToSync.length === 0) {
+    return NextResponse.json({ success: false, error: 'No users to sync' }, { status: 400 })
+  }
+
+  const now    = new Date()
+  const nowISO = now.toISOString()
+  const today  = nowISO.split('T')[0]
+
   const results: any[] = []
   const errors:  any[] = []
-  const now    = new Date()
-  const today  = now.toISOString().split('T')[0]
-  const nowISO = now.toISOString()
 
-  // Fetch all LeetCode stats in parallel
-  const fetched = await Promise.allSettled(
-    usersToSync.map(u =>
-      fetchLeetCodeStats(u.leetcode_username).then(s => ({ u, s }))
-    )
+  // ── Fetch + update each user ───────────────────────────────────────────
+  // Run in parallel for speed
+  await Promise.all(
+    usersToSync.map(async (u) => {
+      try {
+        // 1. Fetch from LeetCode
+        const stats = await fetchLeetCodeStats(u.leetcode_username)
+
+        // 2. UPDATE users table — explicit field-by-field, no upsert
+        const { error: updateErr, data: updatedUser } = await db
+          .from('users')
+          .update({
+            solve_count:    stats.totalSolved,
+            easy_solved:    stats.easySolved,
+            medium_solved:  stats.mediumSolved,
+            hard_solved:    stats.hardSolved,
+            points:         stats.points,
+            last_synced_at: nowISO,
+            updated_at:     nowISO,
+          })
+          .eq('id', u.id)
+          .select('id, solve_count, points, easy_solved, medium_solved, hard_solved')
+          .single()
+
+        if (updateErr) {
+          throw new Error(`DB update failed: ${updateErr.message}`)
+        }
+
+        // 3. Insert daily snapshot for weekly chart
+        await db.from('solve_history').insert({
+          user_id:       u.id,
+          snapshot_date: today,
+          snapshot_time: nowISO,
+          solve_count:   stats.totalSolved,
+          easy_solved:   stats.easySolved,
+          medium_solved: stats.mediumSolved,
+          hard_solved:   stats.hardSolved,
+          points:        stats.points,
+        })
+        // ignore snapshot insert errors (duplicate keys etc.)
+
+        // 4. Update active challenge participants
+        const { data: participations } = await db
+          .from('challenge_participants')
+          .select('id, points_at_start, solve_count_at_start, challenges!inner(status)')
+          .eq('user_id', u.id)
+          .eq('challenges.status', 'active')
+
+        if (participations && participations.length > 0) {
+          await Promise.all(
+            participations.map((p: any) =>
+              db.from('challenge_participants').update({
+                solve_count_current: stats.totalSolved,
+                points_earned:       Math.max(0, stats.points - (p.points_at_start ?? 0)),
+                updated_at:          nowISO,
+              }).eq('id', p.id)
+            )
+          )
+        }
+
+        results.push({
+          username:    u.leetcode_username,
+          name:        u.name,
+          totalSolved: stats.totalSolved,
+          easySolved:  stats.easySolved,
+          medSolved:   stats.mediumSolved,
+          hardSolved:  stats.hardSolved,
+          points:      stats.points,
+          db_updated:  updatedUser?.solve_count === stats.totalSolved,
+        })
+      } catch (e: any) {
+        errors.push({ username: u.leetcode_username, error: e.message })
+      }
+    })
   )
 
-  const successful: { u: typeof usersToSync[0]; s: Awaited<ReturnType<typeof fetchLeetCodeStats>> }[] = []
-  for (const r of fetched) {
-    if (r.status === 'fulfilled') successful.push(r.value)
-    else errors.push({ error: String((r as any).reason) })
+  // ── Re-rank all users by points ───────────────────────────────────────
+  // Single SQL call — no N UPDATE statements
+  if (results.length > 0) {
+    await db.rpc('rerank_users').single()
+    await db.rpc('rerank_challenge_participants').single()
+    await db.rpc('update_all_streaks').single()
   }
 
-  if (successful.length > 0) {
-    // ── Update each user individually (UPDATE not upsert — rows always exist) ──
-    const updateResults = await Promise.all(
-      successful.map(({ u, s }) =>
-        supabaseAdmin.from('users').update({
-          solve_count:    s.totalSolved,
-          easy_solved:    s.easySolved,
-          medium_solved:  s.mediumSolved,
-          hard_solved:    s.hardSolved,
-          points:         s.points,
-          last_synced_at: nowISO,
-        }).eq('id', u.id)
-      )
-    )
+  const success = results.length > 0
 
-    // Check for update errors
-    for (const result of updateResults) {
-      if (result.error) {
-        console.error('[Sync] User update error:', result.error)
-        errors.push({ error: `Failed to update user: ${result.error.message}` })
-      }
-    }
-
-    // ── Batch insert all snapshots ─────────────────────────────────────
-    const { error: snapshotError } = await supabaseAdmin.from('solve_history').insert(
-      successful.map(({ u, s }) => ({
-        user_id:       u.id,
-        snapshot_date: today,
-        solve_count:   s.totalSolved,
-        easy_solved:   s.easySolved,
-        medium_solved: s.mediumSolved,
-        hard_solved:   s.hardSolved,
-        points:        s.points,
-        snapshot_time: nowISO,
-      }))
-    )
-    if (snapshotError) {
-      console.error('[Sync] Snapshot insert error:', snapshotError)
-      errors.push({ error: `Failed to save snapshot: ${snapshotError.message}` })
-    }
-
-    // ── Update active challenge participants per user ──────────────────
-    const challengeResults = await Promise.all(
-      successful.map(({ u, s }) =>
-        supabaseAdmin.rpc('sync_challenge_participants', {
-          p_user_id:     u.id,
-          p_solve_count: s.totalSolved,
-          p_points:      s.points,
-          p_now:         nowISO,
-        })
-      )
-    )
-    
-    // Check for RPC errors
-    for (const result of challengeResults) {
-      if (result.error) {
-        console.error('[Sync] Challenge sync RPC error:', result.error)
-        errors.push({ error: `Failed to sync challenge: ${result.error.message}` })
-      }
-    }
-
-    for (const { u, s } of successful) {
-      results.push({ leetcode_username: u.leetcode_username, ...s })
-    }
-  }
-
-  // ── All post-sync rankings in parallel ────────────────────────────────
-  const rankResults = await Promise.all([
-    supabaseAdmin.rpc('rerank_users'),
-    supabaseAdmin.rpc('rerank_challenge_participants'),
-    supabaseAdmin.rpc('update_all_streaks'),
-  ])
-
-  // Check for ranking errors
-  for (const result of rankResults) {
-    if (result.error) {
-      console.error('[Sync] Ranking RPC error:', result.error)
-      errors.push({ error: `Failed to update rankings: ${result.error.message}` })
-    }
-  }
-
-  return ok({
+  return NextResponse.json({
+    success,
     synced:    results.length,
+    failed:    errors.length,
     synced_at: nowISO,
     results,
     errors,
-  })
+  }, { status: success ? 200 : 500 })
 }
 
+// GET — Vercel cron hits this
 export async function GET(req: NextRequest) {
-  if (req.headers.get('x-sync-secret') !== process.env.SYNC_SECRET)
-    return unauthorized('Invalid sync secret')
-  return POST(new Request(req.url, {
-    method: 'POST', headers: req.headers, body: JSON.stringify({}),
-  }) as NextRequest)
+  if (req.headers.get('x-sync-secret') !== process.env.SYNC_SECRET) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+  return POST(
+    new NextRequest(req.url, {
+      method:  'POST',
+      headers: req.headers,
+      body:    JSON.stringify({}),
+    })
+  )
 }
