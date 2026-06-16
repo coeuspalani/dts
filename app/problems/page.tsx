@@ -79,7 +79,7 @@ export default function ProblemsPage() {
     } catch {} finally { setLoading(false) }
   }, [activeSheet, activeTopic, activeDiff, lcOnly, search])
 
-  useEffect(() => { loadQuestions() }, [activeSheet, activeTopic, activeDiff, lcOnly])
+  useEffect(() => { loadQuestions() }, [loadQuestions])
 
   const handleSearch = (val: string) => {
     setSearch(val)

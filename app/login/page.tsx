@@ -306,7 +306,7 @@ export default function LoginPage() {
           <BackBtn to="login" />
           <div className="text-center mb-2">
             <div className="text-2xl mb-2">🔐</div>
-            <p className="text-sm text-muted">Enter your email and we'll send a reset code</p>
+            <p className="text-sm text-muted">Enter your email and we&apos;ll send a reset code</p>
           </div>
           <Field label="Email" type="email" field="email" placeholder="you@example.com" />
           <ErrorMsg />
