@@ -46,8 +46,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'Incorrect code — please try again' }, { status: 400 })
     }
 
-    // Mark as used
-    await supabase.from('otp_codes').update({ used: true }).eq('id', otp.id)
+    // Mark as used for email verification only. For password resets we
+    // want to leave the code unused so the reset-password endpoint can
+    // re-verify and then consume the code when the password is updated.
+    if (purpose !== 'reset_password') {
+      await supabase.from('otp_codes').update({ used: true }).eq('id', otp.id)
+    }
 
     // If verifying email, mark user as verified
     if (purpose === 'verify_email') {

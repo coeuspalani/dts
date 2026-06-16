@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     const supabase = db()
 
     // Re-verify OTP (must be unused + valid for reset_password)
-    const { data: otp } = await supabase
+    const { data: otp, error: otpError } = await supabase
       .from('otp_codes')
       .select('id, code, expires_at, used')
       .eq('email', email)
@@ -54,7 +54,8 @@ export async function POST(req: NextRequest) {
       .limit(1)
       .single()
 
-    if (!otp) {
+    if (otpError || !otp) {
+      console.error('[reset-password] OTP lookup error:', otpError)
       return NextResponse.json({
         success: false, error: 'Invalid or expired code — please request a new one'
       }, { status: 400 })
@@ -66,6 +67,20 @@ export async function POST(req: NextRequest) {
       }, { status: 400 })
     }
 
+    // Verify user exists before attempting update
+    const { data: userCheck, error: userCheckError } = await supabase
+      .from('users')
+      .select('id, email')
+      .eq('email', email)
+      .single()
+
+    if (userCheckError || !userCheck) {
+      console.error('[reset-password] User lookup error:', userCheckError)
+      return NextResponse.json({
+        success: false, error: 'User account not found'
+      }, { status: 404 })
+    }
+
     // Hash new password
     const passwordHash = await hashPassword(new_password)
 
@@ -73,22 +88,26 @@ export async function POST(req: NextRequest) {
     const { error: updateErr } = await supabase
       .from('users')
       .update({ password_hash: passwordHash, updated_at: new Date().toISOString() })
-      .eq('email', email)
+      .eq('id', userCheck.id)
 
     if (updateErr) {
-      return NextResponse.json({ success: false, error: 'Failed to update password' }, { status: 500 })
+      console.error('[reset-password] Password update error:', updateErr)
+      return NextResponse.json({ 
+        success: false, error: 'Failed to update password' 
+      }, { status: 500 })
     }
 
     // Invalidate the OTP
     await supabase.from('otp_codes').update({ used: true }).eq('id', otp.id)
 
     // Revoke all existing refresh tokens (force re-login everywhere)
-    await supabase.from('refresh_tokens').delete().eq('user_id',
-      (await supabase.from('users').select('id').eq('email', email).single()).data?.id ?? ''
-    )
+    await supabase.from('refresh_tokens').delete().eq('user_id', userCheck.id)
 
     return NextResponse.json({ success: true, message: 'Password updated — please log in' })
   } catch (e: any) {
-    return NextResponse.json({ success: false, error: 'Server error' }, { status: 500 })
+    console.error('[reset-password] Unexpected error:', e)
+    return NextResponse.json({ 
+      success: false, error: 'Server error: ' + (e.message ?? 'unknown') 
+    }, { status: 500 })
   }
 }

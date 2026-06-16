@@ -123,11 +123,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'Failed to generate code' }, { status: 500 })
     }
 
-    await sendOTPEmail(email, code, purpose, name).catch(e =>
-      console.error('[send-otp] email error:', e.message)
-    )
+    try {
+  await sendOTPEmail(email, code, purpose, name)
+} catch (e: any) {
+  console.error('[send-otp] email error:', e)
 
-    return NextResponse.json({ success: true, message: 'Code sent to your email' })
+  return NextResponse.json(
+    {
+      success: false,
+      error: `Email delivery failed: ${e.message}`
+    },
+    { status: 500 }
+  )
+}
+
+return NextResponse.json({
+  success: true,
+  message: 'Code sent to your email'
+})
   } catch (e: any) {
     return NextResponse.json({ success: false, error: 'Server error' }, { status: 500 })
   }

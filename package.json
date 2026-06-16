@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:integration": "node --loader ts-node/esm tests/integration/auth-reset-flow.test.ts",
+    "test:e2e": "playwright test tests/e2e/password-reset.spec.ts",
+    "test": "npm run test:integration"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.43.4",
@@ -22,6 +25,7 @@
     "recharts": "^2.12.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.40.0",
     "@types/node": "^20",
     "@types/nodemailer": "^8.0.0",
     "@types/pdfkit": "^0.17.6",
@@ -31,6 +35,7 @@
     "eslint": "^8",
     "eslint-config-next": "15.3.6",
     "postcss": "^8.4.39",
+    "ts-node": "^10.9.2",
     "tailwindcss": "^3.4.4",
     "typescript": "^5"
   }
