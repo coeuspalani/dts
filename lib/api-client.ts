@@ -111,8 +111,20 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, retry = true
   return json.data as T
 }
 
-export async function register(body: { name: string; email: string; password: string; leetcode_username: string }) {
-  const data = await apiFetch<any>('/api/auth/register', { method: 'POST', body: JSON.stringify(body) })
+export async function register(body: {
+  name: string;
+  email: string;
+  password: string;
+  leetcode_username: string;
+  otp_verified?: boolean;
+}) {
+  const data = await apiFetch<any>(
+    '/api/auth/register',
+    {
+      method: 'POST',
+      body: JSON.stringify(body)
+    }
+  )
   setTokens(data.access_token, data.refresh_token)
   setUser(data.user)
   return data.user

@@ -75,12 +75,16 @@ export function useAuth() {
   }, [])
 
   const register = useCallback(async (data: {
-    name: string; email: string; password: string; leetcode_username: string
-  }) => {
-    const u = await apiRegister(data)
-    if (mountedRef.current) setUser(u)
-    return u
-  }, [])
+  name: string;
+  email: string;
+  password: string;
+  leetcode_username: string;
+  otp_verified?: boolean;
+}) => {
+  const u = await apiRegister(data)
+  if (mountedRef.current) setUser(u)
+  return u
+}, [])
 
   const logout = useCallback(() => {
     localStorage.removeItem('dts_user')
